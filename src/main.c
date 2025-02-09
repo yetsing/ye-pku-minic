@@ -4,17 +4,28 @@
 
 #include "codegen.h"
 #include "parse.h"
+#include "riscv.h"
+
+typedef enum {
+  CODEGEN_TARGET_RISCV,
+  CODEGEN_TARGET_KOOPA,
+} CodegenTarget;
+
+static CodegenTarget target;
 
 // handle cli arguments like "-koopa 输入文件 -o 输出文件"
 void handle_cli_arguments(int argc, char *argv[], char **input_file,
                           char **output_file) {
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-koopa") == 0 && i + 1 < argc) {
-      *input_file = argv[i + 1];
-      i++;
+    if (strcmp(argv[i], "-koopa") == 0) {
+      target = CODEGEN_TARGET_KOOPA;
+    } else if (strcmp(argv[i], "-riscv") == 0) {
+      target = CODEGEN_TARGET_RISCV;
     } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
       *output_file = argv[i + 1];
       i++;
+    } else {
+      *input_file = argv[i];
     }
   }
 }
@@ -44,6 +55,10 @@ static char *read_from_file(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
+  // if program crashes, buffer will not be flushed. So disable buffering.
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+
   char *input_file = NULL;
   char *output_file = NULL;
 
@@ -57,6 +72,27 @@ int main(int argc, char *argv[]) {
   const char *input = read_from_file(input_file);
   AstCompUnit *comp_unit = parse(input);
   // comp_unit->base.dump((AstBase *)comp_unit, 0);
-  codegen(comp_unit, output_file);
+  if (target == CODEGEN_TARGET_RISCV) {
+    printf("=== IR codegen result ===\n");
+    codegen(comp_unit, output_file);
+    const char *ir = read_from_file(output_file);
+    printf("%s\n", ir);
+    riscv_codegen(ir, output_file);
+    free((void *)ir);
+    const char *riscv = read_from_file(output_file);
+    printf("=== RISCV codegen result ===\n");
+    printf("%s\n", riscv);
+    free((void *)riscv);
+  } else if (target == CODEGEN_TARGET_KOOPA) {
+    printf("=== IR codegen result ===\n");
+    codegen(comp_unit, output_file);
+    const char *ir = read_from_file(output_file);
+    printf("%s\n", ir);
+    free((void *)ir);
+  } else {
+    fprintf(stderr, "未指定目标\n");
+    exit(1);
+  }
+  fflush(stdout);
   return 0;
 }
