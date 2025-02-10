@@ -114,7 +114,6 @@ class TestResult:
   status: TestStatus
   answer: str = ''
   time: Optional[str] = None
-  exit_code: int = 0
   output_error: Optional[Tuple[str, str]] = None
 
   def show_details(self):
@@ -126,7 +125,6 @@ class TestResult:
       eprint('your answer:')
       eprint(self.answer)
     elif self.status != TestStatus.PASSED and self.output_error:
-      eprint('exit code:', self.exit_code, 'Segmentation fault' if self.exit_code == -11 else '')
       eprint('stdout:')
       eprint(self.output_error[0])
       eprint('stderr:')
@@ -191,14 +189,13 @@ def execute(cmd: str, timeout: int, error_status: TestStatus,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
       if pipe.wait():
         return TestResult(error_status,
-                          exit_code=pipe.returncode,
                           output_error=(decode_bytes(pipe.stdout.read()),
                                         decode_bytes(pipe.stderr.read())))
     else:
       result = subprocess.run(shlex.split(cmd), timeout=timeout,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode:
-      return TestResult(error_status, exit_code=result.returncode, output_error=decode_result(result))
+      return TestResult(error_status, output_error=decode_result(result))
   except subprocess.TimeoutExpired:
     return TestResult(timeout_status)
   return None

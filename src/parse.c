@@ -14,6 +14,11 @@ typedef struct {
 
 static Parser parser;
 
+static AstExp *parse_exp(void);
+static AstExp *parse_primary_exp(void);
+static AstNumber *parse_number(void);
+static AstExp *parse_unary_exp(void);
+
 static void advance(void) {
   parser.current = parser.next;
   parser.next = next_token();
@@ -59,11 +64,44 @@ static AstNumber *parse_number(void) {
   return number;
 }
 
-// Stmt      ::= "return" Number ";";
+// PrimaryExp  ::= "(" Exp ")" | Number;
+static AstExp *parse_primary_exp(void) {
+  switch (parser.current.type) {
+  case TOKEN_INTEGER:
+    return (AstExp *)parse_number();
+  case TOKEN_LPAREN:
+    advance();
+    AstExp *exp = parse_exp();
+    consume(TOKEN_RPAREN);
+    return exp;
+  default:
+    fprintf(stderr, "Syntax error: unexpected token %d at line %d\n",
+            parser.current.type, parser.current.line);
+    exit(1);
+  }
+}
+
+// UnaryExp   ::= PrimaryExp | ("+" | "-" | "!") UnaryExp;
+static AstExp *parse_unary_exp(void) {
+  if (parser.current.type == TOKEN_PLUS || parser.current.type == TOKEN_MINUS ||
+      parser.current.type == TOKEN_BANG) {
+    AstUnaryExp *unary_exp = new_ast_unary_exp();
+    unary_exp->op = *parser.current.start;
+    advance();
+    unary_exp->operand = parse_unary_exp();
+    return (AstExp *)unary_exp;
+  }
+  return parse_primary_exp();
+}
+
+// Exp         ::= UnaryExp;
+static AstExp *parse_exp(void) { return (AstExp *)parse_unary_exp(); }
+
+// Stmt        ::= "return" Exp ";";
 static AstStmt *parse_stmt(void) {
   AstStmt *stmt = new_ast_stmt();
   match("return");
-  stmt->number = parse_number();
+  stmt->exp = parse_exp();
   consume(TOKEN_SEMICOLON);
   return stmt;
 }

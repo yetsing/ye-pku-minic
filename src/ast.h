@@ -3,6 +3,7 @@
 
 typedef enum {
   AST_NUMBER,
+  AST_UNARY_EXP,
   AST_FUNC_TYPE,
   AST_IDENTIFIER,
   AST_STMT,
@@ -21,14 +22,26 @@ typedef struct AstBase {
 } AstBase;
 
 typedef struct {
-  AstBase base;
+  AstType type;
+  DumpFunc dump;
+} AstExp;
+
+typedef struct {
+  AstExp base;
   int number;
 } AstNumber;
 AstNumber *new_ast_number();
 
+typedef struct AstUnaryExp {
+  AstExp base;
+  char op;
+  AstExp *operand;
+} AstUnaryExp;
+AstUnaryExp *new_ast_unary_exp();
+
 typedef struct {
   AstBase base;
-  AstNumber *number;
+  AstExp *exp;
 } AstStmt;
 AstStmt *new_ast_stmt();
 

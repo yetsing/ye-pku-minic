@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ast.h"
+
 FILE *fp = NULL;
+int symbol_index = 0;
 
 static void outputf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void outputf(const char *fmt, ...) {
@@ -15,8 +18,59 @@ static void outputf(const char *fmt, ...) {
   va_end(args);
 }
 
+// 返回符号，表示表达式的结果
+static char *exp_symbol(AstExp *exp) {
+  size_t size = 32;
+  char *buf = malloc(size);
+  if (exp->type == AST_UNARY_EXP && ((AstUnaryExp *)exp)->op == '+') {
+    free(buf);
+    return exp_symbol(((AstUnaryExp *)exp)->operand);
+  } else if (exp->type == AST_NUMBER ||
+             (exp->type == AST_UNARY_EXP && ((AstUnaryExp *)exp)->op == '+')) {
+    snprintf(buf, size, "%d", ((AstNumber *)exp)->number);
+  } else {
+    snprintf(buf, size, "%%%d", symbol_index - 1);
+  }
+  return buf;
+}
+
+static void codegen_exp(AstExp *exp) {
+  switch (exp->type) {
+  case AST_UNARY_EXP: {
+    AstUnaryExp *unary_exp = (AstUnaryExp *)exp;
+    codegen_exp(unary_exp->operand);
+    switch (unary_exp->op) {
+    case '-': {
+      outputf("  %%%d = sub 0, %s\n", symbol_index,
+              exp_symbol(unary_exp->operand));
+      symbol_index++;
+      break;
+    }
+    case '!': {
+      outputf("  %%%d = eq %s, 0\n", symbol_index,
+              exp_symbol(unary_exp->operand));
+      symbol_index++;
+      break;
+    }
+    case '+':
+      // nothing to do
+      break;
+    }
+    break;
+  }
+
+  case AST_NUMBER:
+    // nothing to do
+    break;
+  default:
+    fprintf(stderr, "未知的表达式类型\n");
+    exit(1);
+  }
+}
+
 static void codegen_stmt(AstStmt *stmt) {
-  outputf("  ret %d\n", stmt->number->number);
+  codegen_exp(stmt->exp);
+  outputf("  ret %s\n", exp_symbol(stmt->exp));
 }
 
 static void codegen_block(AstBlock *block) {

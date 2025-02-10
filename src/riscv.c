@@ -9,6 +9,7 @@
 #include "koopa.h"
 
 static FILE *fp;
+static int register_index = 0;
 
 static void outputf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void outputf(const char *fmt, ...) {
@@ -26,15 +27,36 @@ static void visit_koopa_raw_basic_block(const koopa_raw_basic_block_t block);
 static void visit_koopa_raw_function(const koopa_raw_function_t func);
 static void visit_koopa_raw_slice(const koopa_raw_slice_t slice);
 static void visit_koopa_raw_program(const koopa_raw_program_t program);
+static void visit_koopa_raw_binary(const koopa_raw_binary_t binary);
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   visit_koopa_raw_value(ret.value);
-  outputf("  mv a0, t0\n");
+  outputf("  mv a0, t%d\n", register_index - 1);
   outputf("  ret\n");
 }
 
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n) {
-  outputf("  li t0, %d\n", n.value);
+  outputf("  li t%d, %d\n", register_index, n.value);
+  register_index++;
+}
+
+static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
+  switch (binary.op) {
+  case KOOPA_RBO_SUB:
+    visit_koopa_raw_value(binary.rhs);
+    outputf("  sub t%d, x0, t%d\n", register_index, register_index - 1);
+    register_index++;
+    break;
+  case KOOPA_RBO_EQ: {
+    visit_koopa_raw_value(binary.lhs);
+    outputf("  xor t%d, t%d, x0\n", register_index - 1, register_index - 1);
+    outputf("  seqz t%d, t%d\n", register_index - 1, register_index - 1);
+    break;
+  }
+  default:
+    printf("visit_koopa_raw_binary unknown op: %d\n", binary.op);
+    assert(false);
+  }
 }
 
 static void visit_koopa_raw_value(const koopa_raw_value_t value) {
@@ -46,6 +68,10 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   case KOOPA_RVT_INTEGER:
     visit_koopa_raw_integer(kind.data.integer);
     break;
+  case KOOPA_RVT_BINARY: {
+    visit_koopa_raw_binary(kind.data.binary);
+    break;
+  }
   default:
     printf("visit_koopa_raw_value unknown kind: %d\n", kind.tag);
     assert(false);
@@ -74,9 +100,14 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice) {
     case KOOPA_RSIK_BASIC_BLOCK:
       visit_koopa_raw_basic_block(ptr);
       break;
-    case KOOPA_RSIK_VALUE:
+    case KOOPA_RSIK_VALUE: {
+      const koopa_raw_value_t value = ptr;
+      if (value->used_by.len > 0) {
+        break;
+      }
       visit_koopa_raw_value(ptr);
       break;
+    }
     default:
       printf("visit_koopa_raw_slice unknown kind: %d\n", slice.kind);
       assert(false);

@@ -15,10 +15,28 @@ AstNumber *new_ast_number() {
   return node;
 }
 
+void ast_unary_exp_dump(AstUnaryExp *node, int indent) {
+  printf("UnaryExp: {\n");
+  printf("%*s  op: %c,\n", indent, " ", node->op);
+  printf("%*s  operand: ", indent, " ");
+  node->operand->dump((AstBase *)node->operand, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstUnaryExp *new_ast_unary_exp() {
+  AstUnaryExp *node = malloc(sizeof(AstUnaryExp));
+  node->base.type = AST_UNARY_EXP;
+  node->base.dump = (DumpFunc)ast_unary_exp_dump;
+  node->op = 0;
+  node->operand = NULL;
+  return node;
+}
+
 void ast_stmt_dump(AstStmt *node, int indent) {
   printf("Stmt: {\n");
-  printf("%*s  number: ", indent, " ");
-  node->number->base.dump((AstBase *)node->number, indent);
+  printf("%*s  exp: ", indent, " ");
+  node->exp->dump((AstBase *)node->exp, indent + 2);
   printf(",\n");
   printf("%*s}", indent, " ");
 }
@@ -27,7 +45,7 @@ AstStmt *new_ast_stmt() {
   AstStmt *node = malloc(sizeof(AstStmt));
   node->base.type = AST_STMT;
   node->base.dump = (DumpFunc)ast_stmt_dump;
-  node->number = NULL;
+  node->exp = NULL;
   return node;
 }
 

@@ -158,6 +158,9 @@ Token next_token(void) {
     case '*':
       advance();
       return (Token){TOKEN_STAR, tokenizer.start, 1, tokenizer.line};
+    case '!':
+      advance();
+      return (Token){TOKEN_BANG, tokenizer.start, 1, tokenizer.line};
     case '/': {
       if (peek() == '/') {
         advance();
