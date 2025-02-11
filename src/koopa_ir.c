@@ -1,4 +1,4 @@
-#include "codegen.h"
+#include "koopa_ir.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -25,8 +25,7 @@ static char *exp_symbol(AstExp *exp) {
   if (exp->type == AST_UNARY_EXP && ((AstUnaryExp *)exp)->op == '+') {
     free(buf);
     return exp_symbol(((AstUnaryExp *)exp)->operand);
-  } else if (exp->type == AST_NUMBER ||
-             (exp->type == AST_UNARY_EXP && ((AstUnaryExp *)exp)->op == '+')) {
+  } else if (exp->type == AST_NUMBER) {
     snprintf(buf, size, "%d", ((AstNumber *)exp)->number);
   } else {
     snprintf(buf, size, "%%%d", symbol_index - 1);
@@ -56,6 +55,46 @@ static void codegen_exp(AstExp *exp) {
       // nothing to do
       break;
     }
+    break;
+  }
+  case AST_BINARY_EXP: {
+    AstBinaryExp *binary_exp = (AstBinaryExp *)exp;
+    codegen_exp(binary_exp->lhs);
+    char *lhs = exp_symbol(binary_exp->lhs);
+    codegen_exp(binary_exp->rhs);
+    char *rhs = exp_symbol(binary_exp->rhs);
+    switch (binary_exp->op) {
+    case '+': {
+      outputf("  %%%d = add %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case '-': {
+      outputf("  %%%d = sub %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case '*': {
+      outputf("  %%%d = mul %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case '/': {
+      outputf("  %%%d = div %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case '%': {
+      outputf("  %%%d = mod %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    default:
+      fprintf(stderr, "未知的二元运算符 %c\n", binary_exp->op);
+      exit(1);
+    }
+    free(lhs);
+    free(rhs);
     break;
   }
 
@@ -92,7 +131,7 @@ static void codegen_comp_unit(AstCompUnit *comp_unit) {
   codegen_func_def(comp_unit->func_def);
 }
 
-void codegen(AstCompUnit *comp_unit, const char *output_file) {
+void koopa_ir_codegen(AstCompUnit *comp_unit, const char *output_file) {
   fp = fopen(output_file, "w");
   if (fp == NULL) {
     fprintf(stderr, "无法打开文件 %s\n", output_file);

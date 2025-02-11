@@ -1,5 +1,6 @@
 #include "parse.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,8 @@ static AstExp *parse_exp(void);
 static AstExp *parse_primary_exp(void);
 static AstNumber *parse_number(void);
 static AstExp *parse_unary_exp(void);
+static AstExp *parse_add_exp(void);
+static AstExp *parse_mul_exp(void);
 
 static void advance(void) {
   parser.current = parser.next;
@@ -28,8 +31,9 @@ static void consume(TokenType type) {
   if (parser.current.type == type) {
     advance();
   } else {
-    fprintf(stderr, "Syntax error: expected %d, got %d at line %d\n", type,
-            parser.current.type, parser.current.line);
+    fprintf(stderr, "Syntax error: expected %s, got %s at line %d\n",
+            token_type_to_string(type),
+            token_type_to_string(parser.current.type), parser.current.line);
     exit(1);
   }
 }
@@ -58,8 +62,21 @@ static AstNumber *parse_number(void) {
     }
   }
   char *number_str = strndup(start, parser.current.length);
-  number->number = strtol(number_str, NULL, base);
+  char *endptr;
+  long long n = strtoll(number_str, &endptr, base);
+  if (*endptr != '\0') {
+    fprintf(stderr, "无效数字: %.*s at line %d\n", parser.current.length,
+            parser.current.start, parser.current.line);
+    exit(1);
+  }
+  // i32 number range check
+  if (n > INT32_MAX || n < INT32_MIN) {
+    fprintf(stderr, "数字超出 i32 范围: %lld (base %d) at line %d\n", n, base,
+            parser.current.line);
+    exit(1);
+  }
   free(number_str);
+  number->number = n;
   consume(TOKEN_INTEGER);
   return number;
 }
@@ -94,8 +111,39 @@ static AstExp *parse_unary_exp(void) {
   return parse_primary_exp();
 }
 
-// Exp         ::= UnaryExp;
-static AstExp *parse_exp(void) { return (AstExp *)parse_unary_exp(); }
+// MulExp      ::= UnaryExp (("*" | "/" | "%") UnaryExp)*;
+static AstExp *parse_mul_exp(void) {
+  AstExp *exp = parse_unary_exp();
+  while (parser.current.type == TOKEN_ASTERISK ||
+         parser.current.type == TOKEN_SLASH ||
+         parser.current.type == TOKEN_PERCENT) {
+    AstBinaryExp *binary_exp = new_ast_binary_exp();
+    binary_exp->lhs = exp;
+    binary_exp->op = *parser.current.start;
+    advance();
+    binary_exp->rhs = parse_unary_exp();
+    exp = (AstExp *)binary_exp;
+  }
+  return exp;
+}
+
+// AddExp      ::= MulExp (("+" | "-") MulExp)*;
+static AstExp *parse_add_exp(void) {
+  AstExp *exp = parse_mul_exp();
+  while (parser.current.type == TOKEN_PLUS ||
+         parser.current.type == TOKEN_MINUS) {
+    AstBinaryExp *binary_exp = new_ast_binary_exp();
+    binary_exp->lhs = exp;
+    binary_exp->op = *parser.current.start;
+    advance();
+    binary_exp->rhs = parse_mul_exp();
+    exp = (AstExp *)binary_exp;
+  }
+  return exp;
+}
+
+// Exp         ::= AddExp;
+static AstExp *parse_exp(void) { return (AstExp *)parse_add_exp(); }
 
 // Stmt        ::= "return" Exp ";";
 static AstStmt *parse_stmt(void) {

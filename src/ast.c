@@ -33,6 +33,28 @@ AstUnaryExp *new_ast_unary_exp() {
   return node;
 }
 
+void ast_binary_exp_dump(AstBinaryExp *node, int indent) {
+  printf("BinaryExp: {\n");
+  printf("%*s  op: %c,\n", indent, " ", node->op);
+  printf("%*s  lhs: ", indent, " ");
+  node->lhs->dump((AstBase *)node->lhs, indent + 2);
+  printf(",\n");
+  printf("%*s  rhs: ", indent, " ");
+  node->rhs->dump((AstBase *)node->rhs, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstBinaryExp *new_ast_binary_exp() {
+  AstBinaryExp *node = malloc(sizeof(AstBinaryExp));
+  node->base.type = AST_BINARY_EXP;
+  node->base.dump = (DumpFunc)ast_binary_exp_dump;
+  node->op = 0;
+  node->lhs = NULL;
+  node->rhs = NULL;
+  return node;
+}
+
 void ast_stmt_dump(AstStmt *node, int indent) {
   printf("Stmt: {\n");
   printf("%*s  exp: ", indent, " ");

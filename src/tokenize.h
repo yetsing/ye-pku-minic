@@ -6,17 +6,20 @@ typedef enum {
   TOKEN_COMMENT,
   TOKEN_INTEGER,
   TOKEN_IDENTIFIER,
-  TOKEN_PLUS,
-  TOKEN_MINUS,
-  TOKEN_STAR,
-  TOKEN_SLASH,
-  TOKEN_LPAREN,
-  TOKEN_RPAREN,
-  TOKEN_LBRACE,
-  TOKEN_RBRACE,
-  TOKEN_SEMICOLON,
-  TOKEN_BANG,
+  TOKEN_PLUS,      // +
+  TOKEN_MINUS,     // -
+  TOKEN_ASTERISK,  // *
+  TOKEN_SLASH,     // /
+  TOKEN_PERCENT,   // %
+  TOKEN_LPAREN,    // (
+  TOKEN_RPAREN,    // )
+  TOKEN_LBRACE,    // {
+  TOKEN_RBRACE,    // }
+  TOKEN_SEMICOLON, // ;
+  TOKEN_BANG,      // !
 } TokenType;
+
+const char *token_type_to_string(TokenType type);
 
 typedef struct {
   TokenType type;

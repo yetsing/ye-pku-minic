@@ -3,6 +3,6 @@
 
 #include "ast.h"
 
-void codegen(AstCompUnit *comp_unit, const char *output_file);
+void koopa_ir_codegen(AstCompUnit *comp_unit, const char *output_file);
 
 #endif // SRC_CODEGEN_H_

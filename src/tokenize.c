@@ -4,6 +4,42 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+const char *token_type_to_string(TokenType type) {
+  switch (type) {
+  case TOKEN_IDENTIFIER:
+    return "IDENTIFIER";
+  case TOKEN_INTEGER:
+    return "INTEGER";
+  case TOKEN_PLUS:
+    return "PLUS";
+  case TOKEN_MINUS:
+    return "MINUS";
+  case TOKEN_ASTERISK:
+    return "STAR";
+  case TOKEN_SLASH:
+    return "SLASH";
+  case TOKEN_BANG:
+    return "BANG";
+  case TOKEN_LPAREN:
+    return "LPAREN";
+  case TOKEN_RPAREN:
+    return "RPAREN";
+  case TOKEN_LBRACE:
+    return "LBRACE";
+  case TOKEN_RBRACE:
+    return "RBRACE";
+  case TOKEN_SEMICOLON:
+    return "SEMICOLON";
+  case TOKEN_COMMENT:
+    return "COMMENT";
+  case TOKEN_EOF:
+    return "EOF";
+  case TOKEN_PERCENT:
+    return "PERCENT";
+  }
+  return "UNKNOWN";
+}
+
 typedef struct Tokenizer {
   const char *start;
   const char *current;
@@ -149,6 +185,9 @@ Token next_token(void) {
 
     char c = *tokenizer.current;
     switch (c) {
+    case '%':
+      advance();
+      return (Token){TOKEN_PERCENT, tokenizer.start, 1, tokenizer.line};
     case '+':
       advance();
       return (Token){TOKEN_PLUS, tokenizer.start, 1, tokenizer.line};
@@ -157,7 +196,7 @@ Token next_token(void) {
       return (Token){TOKEN_MINUS, tokenizer.start, 1, tokenizer.line};
     case '*':
       advance();
-      return (Token){TOKEN_STAR, tokenizer.start, 1, tokenizer.line};
+      return (Token){TOKEN_ASTERISK, tokenizer.start, 1, tokenizer.line};
     case '!':
       advance();
       return (Token){TOKEN_BANG, tokenizer.start, 1, tokenizer.line};
@@ -197,7 +236,8 @@ Token next_token(void) {
       if (is_digit(c)) {
         return integer();
       }
-      fprintf(stderr, "无法识别的字符 %d at line %d\n", c, tokenizer.line);
+      fprintf(stderr, "无法识别的字符 %c(%d) at line %d\n", c, c,
+              tokenizer.line);
       exit(1);
     }
   }

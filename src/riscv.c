@@ -9,6 +9,10 @@
 #include "koopa.h"
 
 static FILE *fp;
+static const char *register_names[] = {
+    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "a0",
+    "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+};
 static int register_index = 0;
 
 static void outputf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -29,28 +33,57 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice);
 static void visit_koopa_raw_program(const koopa_raw_program_t program);
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary);
 
+static bool is_zero(const koopa_raw_value_t value) {
+  if (value->kind.tag == KOOPA_RVT_INTEGER) {
+    return value->kind.data.integer.value == 0;
+  }
+  return false;
+}
+
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   visit_koopa_raw_value(ret.value);
-  outputf("  mv a0, t%d\n", register_index - 1);
+  outputf("  mv a0, %s\n", register_names[register_index - 1]);
   outputf("  ret\n");
 }
 
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n) {
-  outputf("  li t%d, %d\n", register_index, n.value);
+  outputf("  li %s, %d\n", register_names[register_index], n.value);
   register_index++;
 }
 
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
+  // 如果 lhs 或 rhs 是 0, 则不需要分配寄存器，直接使用 x0 即可
+  const char *lhs_register = "x0";
+  if (!is_zero(binary.lhs)) {
+    visit_koopa_raw_value(binary.lhs);
+    lhs_register = register_names[register_index - 1];
+  }
+  const char *rhs_register = "x0";
+  if (!is_zero(binary.rhs)) {
+    visit_koopa_raw_value(binary.rhs);
+    rhs_register = register_names[register_index - 1];
+  }
+  const char *result_register = register_names[register_index];
+  register_index++;
   switch (binary.op) {
   case KOOPA_RBO_SUB:
-    visit_koopa_raw_value(binary.rhs);
-    outputf("  sub t%d, x0, t%d\n", register_index, register_index - 1);
-    register_index++;
+    outputf("  sub %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
+  case KOOPA_RBO_ADD:
+    outputf("  add %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
+  case KOOPA_RBO_MUL:
+    outputf("  mul %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
+  case KOOPA_RBO_DIV:
+    outputf("  div %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
+  case KOOPA_RBO_MOD:
+    outputf("  rem %s, %s, %s\n", result_register, lhs_register, rhs_register);
     break;
   case KOOPA_RBO_EQ: {
-    visit_koopa_raw_value(binary.lhs);
-    outputf("  xor t%d, t%d, x0\n", register_index - 1, register_index - 1);
-    outputf("  seqz t%d, t%d\n", register_index - 1, register_index - 1);
+    outputf("  xor %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    outputf("  seqz %s, %s\n", result_register, result_register);
     break;
   }
   default:
@@ -103,6 +136,8 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice) {
     case KOOPA_RSIK_VALUE: {
       const koopa_raw_value_t value = ptr;
       if (value->used_by.len > 0) {
+        // 在处理 used_by 的时候，会将这个 value 也处理
+        // 所以这里不需要再处理
         break;
       }
       visit_koopa_raw_value(ptr);

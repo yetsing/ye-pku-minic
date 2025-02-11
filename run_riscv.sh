@@ -6,4 +6,4 @@ cmake -S "/root/compiler" -B "/tmp/debug" -DLIB_DIR="/opt/lib/native" -DINC_DIR=
 cmake --build "/tmp/debug" --target compiler
 echo "Compilation successful: /tmp/debug/compiler"
 
-/tmp/debug/compiler "$@"
+/tmp/debug/compiler -riscv "$1" -o /tmp/riscv_output.txt

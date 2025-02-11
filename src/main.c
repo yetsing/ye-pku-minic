@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "codegen.h"
+#include "koopa_ir.h"
 #include "parse.h"
 #include "riscv.h"
 
@@ -74,21 +74,21 @@ int main(int argc, char *argv[]) {
   printf("%s\n", input);
   AstCompUnit *comp_unit = parse(input);
   if (target == CODEGEN_TARGET_RISCV) {
-    printf("=== IR codegen result ===\n");
-    codegen(comp_unit, output_file);
+    printf("=== Koopa IR codegen result ===\n");
+    koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
     printf("%s\n", ir);
     riscv_codegen(ir, output_file);
     free((void *)ir);
     const char *riscv = read_from_file(output_file);
-    printf("=== RISCV codegen result ===\n");
+    printf("=== RISC-V codegen result ===\n");
     printf("%s\n", riscv);
     free((void *)riscv);
   } else if (target == CODEGEN_TARGET_KOOPA) {
     printf("=== AST dump ===\n");
     comp_unit->base.dump((AstBase *)comp_unit, 0);
-    printf("=== IR codegen result ===\n");
-    codegen(comp_unit, output_file);
+    printf("=== Koopa IR codegen result ===\n");
+    koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
     printf("%s\n", ir);
     free((void *)ir);
