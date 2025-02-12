@@ -13,6 +13,23 @@ typedef enum {
   AST_COMP_UNIT,
 } AstType;
 
+typedef enum {
+  BinaryOpType_ADD,
+  BinaryOpType_SUB,
+  BinaryOpType_MUL,
+  BinaryOpType_DIV,
+  BinaryOpType_MOD,
+  BinaryOpType_EQ,
+  BinaryOpType_NE, // Not Equal
+  BinaryOpType_LT, // Less Than
+  BinaryOpType_LE, // Less Than or Equal
+  BinaryOpType_GT, // Greater Than
+  BinaryOpType_GE, // Greater Than or Equal
+  BinaryOpType_AND,
+  BinaryOpType_OR,
+} BinaryOpType;
+const char *binary_op_type_to_string(BinaryOpType type);
+
 typedef struct AstBase AstBase;
 
 typedef void (*DumpFunc)(AstBase *node, int indent);
@@ -42,7 +59,7 @@ AstUnaryExp *new_ast_unary_exp();
 
 typedef struct AstBinaryExp {
   AstExp base;
-  char op;
+  BinaryOpType op;
   AstExp *lhs;
   AstExp *rhs;
 } AstBinaryExp;

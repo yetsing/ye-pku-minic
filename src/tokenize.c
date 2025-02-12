@@ -1,8 +1,8 @@
 #include "tokenize.h"
 
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+
+#include "utils.h"
 
 const char *token_type_to_string(TokenType type) {
   switch (type) {
@@ -36,6 +36,22 @@ const char *token_type_to_string(TokenType type) {
     return "EOF";
   case TOKEN_PERCENT:
     return "PERCENT";
+  case TOKEN_LESS:
+    return "LESS";
+  case TOKEN_LESS_EQUAL:
+    return "LESS_EQUAL";
+  case TOKEN_GREATER:
+    return "GREATER";
+  case TOKEN_GREATER_EQUAL:
+    return "GREATER_EQUAL";
+  case TOKEN_EQUAL:
+    return "EQUAL";
+  case TOKEN_NOT_EQUAL:
+    return "NOT_EQUAL";
+  case TOKEN_AND:
+    return "AND";
+  case TOKEN_OR:
+    return "OR";
   }
   return "UNKNOWN";
 }
@@ -157,8 +173,7 @@ static Token single_line_comment(void) {
 static Token multi_line_comment(void) {
   while (true) {
     if (is_at_end()) {
-      fprintf(stderr, "多行注释没有以 */ 结尾\n");
-      exit(1);
+      fatalf("多行注释没有以 */ 结尾 at line %d\n", tokenizer.line);
     }
     if (*tokenizer.current == '*') {
       advance();
@@ -185,6 +200,54 @@ Token next_token(void) {
 
     char c = *tokenizer.current;
     switch (c) {
+    case '<': {
+      if (peek() == '=') {
+        advance();
+        advance();
+        return (Token){TOKEN_LESS_EQUAL, tokenizer.start, 2, tokenizer.line};
+      } else {
+        advance();
+        return (Token){TOKEN_LESS, tokenizer.start, 1, tokenizer.line};
+      }
+    }
+    case '>': {
+      if (peek() == '=') {
+        advance();
+        advance();
+        return (Token){TOKEN_GREATER_EQUAL, tokenizer.start, 2, tokenizer.line};
+      } else {
+        advance();
+        return (Token){TOKEN_GREATER, tokenizer.start, 1, tokenizer.line};
+      }
+    }
+    case '=': {
+      if (peek() == '=') {
+        advance();
+        advance();
+        return (Token){TOKEN_EQUAL, tokenizer.start, 2, tokenizer.line};
+      } else {
+        advance();
+        return (Token){TOKEN_EQUAL, tokenizer.start, 1, tokenizer.line};
+      }
+    }
+    case '&': {
+      if (peek() == '&') {
+        advance();
+        advance();
+        return (Token){TOKEN_AND, tokenizer.start, 2, tokenizer.line};
+      } else {
+        fatalf("无法识别的字符 %c at line %d\n", c, tokenizer.line);
+      }
+    }
+    case '|': {
+      if (peek() == '|') {
+        advance();
+        advance();
+        return (Token){TOKEN_OR, tokenizer.start, 2, tokenizer.line};
+      } else {
+        fatalf("无法识别的字符 %c at line %d\n", c, tokenizer.line);
+      }
+    }
     case '%':
       advance();
       return (Token){TOKEN_PERCENT, tokenizer.start, 1, tokenizer.line};
@@ -197,9 +260,16 @@ Token next_token(void) {
     case '*':
       advance();
       return (Token){TOKEN_ASTERISK, tokenizer.start, 1, tokenizer.line};
-    case '!':
-      advance();
-      return (Token){TOKEN_BANG, tokenizer.start, 1, tokenizer.line};
+    case '!': {
+      if (peek() == '=') {
+        advance();
+        advance();
+        return (Token){TOKEN_NOT_EQUAL, tokenizer.start, 2, tokenizer.line};
+      } else {
+        advance();
+        return (Token){TOKEN_BANG, tokenizer.start, 1, tokenizer.line};
+      }
+    }
     case '/': {
       if (peek() == '/') {
         advance();
@@ -236,9 +306,7 @@ Token next_token(void) {
       if (is_digit(c)) {
         return integer();
       }
-      fprintf(stderr, "无法识别的字符 %c(%d) at line %d\n", c, c,
-              tokenizer.line);
-      exit(1);
+      fatalf("无法识别的字符 %c(%d) at line %d\n", c, c, tokenizer.line);
     }
   }
 }

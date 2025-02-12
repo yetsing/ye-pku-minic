@@ -64,31 +64,86 @@ static void codegen_exp(AstExp *exp) {
     codegen_exp(binary_exp->rhs);
     char *rhs = exp_symbol(binary_exp->rhs);
     switch (binary_exp->op) {
-    case '+': {
+    case BinaryOpType_ADD: {
       outputf("  %%%d = add %s, %s\n", symbol_index, lhs, rhs);
       symbol_index++;
       break;
     }
-    case '-': {
+    case BinaryOpType_SUB: {
       outputf("  %%%d = sub %s, %s\n", symbol_index, lhs, rhs);
       symbol_index++;
       break;
     }
-    case '*': {
+    case BinaryOpType_MUL: {
       outputf("  %%%d = mul %s, %s\n", symbol_index, lhs, rhs);
       symbol_index++;
       break;
     }
-    case '/': {
+    case BinaryOpType_DIV: {
       outputf("  %%%d = div %s, %s\n", symbol_index, lhs, rhs);
       symbol_index++;
       break;
     }
-    case '%': {
+    case BinaryOpType_MOD: {
       outputf("  %%%d = mod %s, %s\n", symbol_index, lhs, rhs);
       symbol_index++;
       break;
     }
+    case BinaryOpType_EQ: {
+      outputf("  %%%d = eq %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_NE: {
+      outputf("  %%%d = ne %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_LT: {
+      outputf("  %%%d = lt %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_LE: {
+      outputf("  %%%d = le %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_GT: {
+      outputf("  %%%d = gt %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_GE: {
+      outputf("  %%%d = ge %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_AND: {
+      // a && b
+      // r1 = a != 0
+      // r2 = b != 0
+      // r3 = r1 & r2
+      outputf("  %%%d = ne %s, 0\n", symbol_index, lhs);
+      symbol_index++;
+      outputf("  %%%d = ne %s, 0\n", symbol_index, rhs);
+      symbol_index++;
+      outputf("  %%%d = and %%%d, %%%d\n", symbol_index, symbol_index - 2,
+              symbol_index - 1);
+      symbol_index++;
+      break;
+    }
+    case BinaryOpType_OR: {
+      // a || b
+      // r1 = a | b
+      // r2 = r1 != 0
+      outputf("  %%%d = or %s, %s\n", symbol_index, lhs, rhs);
+      symbol_index++;
+      outputf("  %%%d = ne %%%d, 0\n", symbol_index, symbol_index - 1);
+      symbol_index++;
+      break;
+    }
+
     default:
       fprintf(stderr, "未知的二元运算符 %c\n", binary_exp->op);
       exit(1);

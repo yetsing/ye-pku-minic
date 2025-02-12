@@ -21,6 +21,10 @@ static AstNumber *parse_number(void);
 static AstExp *parse_unary_exp(void);
 static AstExp *parse_add_exp(void);
 static AstExp *parse_mul_exp(void);
+static AstExp *parse_lor_exp(void);
+static AstExp *parse_land_exp(void);
+static AstExp *parse_eq_exp(void);
+static AstExp *parse_rel_exp(void);
 
 static void advance(void) {
   parser.current = parser.next;
@@ -44,6 +48,41 @@ static void match(const char *expected) {
   } else {
     fprintf(stderr, "Syntax error: expected %s, got %.*s at line %d\n",
             expected, parser.current.length, parser.current.start,
+            parser.current.line);
+    exit(1);
+  }
+}
+
+BinaryOpType token_type_to_binary_op_type(TokenType type) {
+  switch (type) {
+  case TOKEN_PLUS:
+    return BinaryOpType_ADD;
+  case TOKEN_MINUS:
+    return BinaryOpType_SUB;
+  case TOKEN_ASTERISK:
+    return BinaryOpType_MUL;
+  case TOKEN_SLASH:
+    return BinaryOpType_DIV;
+  case TOKEN_PERCENT:
+    return BinaryOpType_MOD;
+  case TOKEN_EQUAL:
+    return BinaryOpType_EQ;
+  case TOKEN_NOT_EQUAL:
+    return BinaryOpType_NE;
+  case TOKEN_LESS:
+    return BinaryOpType_LT;
+  case TOKEN_LESS_EQUAL:
+    return BinaryOpType_LE;
+  case TOKEN_GREATER:
+    return BinaryOpType_GT;
+  case TOKEN_GREATER_EQUAL:
+    return BinaryOpType_GE;
+  case TOKEN_AND:
+    return BinaryOpType_AND;
+  case TOKEN_OR:
+    return BinaryOpType_OR;
+  default:
+    fprintf(stderr, "Invalid binary operator: %d at line %d\n", type,
             parser.current.line);
     exit(1);
   }
@@ -119,7 +158,7 @@ static AstExp *parse_mul_exp(void) {
          parser.current.type == TOKEN_PERCENT) {
     AstBinaryExp *binary_exp = new_ast_binary_exp();
     binary_exp->lhs = exp;
-    binary_exp->op = *parser.current.start;
+    binary_exp->op = token_type_to_binary_op_type(parser.current.type);
     advance();
     binary_exp->rhs = parse_unary_exp();
     exp = (AstExp *)binary_exp;
@@ -134,7 +173,7 @@ static AstExp *parse_add_exp(void) {
          parser.current.type == TOKEN_MINUS) {
     AstBinaryExp *binary_exp = new_ast_binary_exp();
     binary_exp->lhs = exp;
-    binary_exp->op = *parser.current.start;
+    binary_exp->op = token_type_to_binary_op_type(parser.current.type);
     advance();
     binary_exp->rhs = parse_mul_exp();
     exp = (AstExp *)binary_exp;
@@ -142,8 +181,68 @@ static AstExp *parse_add_exp(void) {
   return exp;
 }
 
-// Exp         ::= AddExp;
-static AstExp *parse_exp(void) { return (AstExp *)parse_add_exp(); }
+// RelExp      ::= AddExp (("<" | "<=" | ">" | ">=") AddExp)*;
+static AstExp *parse_rel_exp(void) {
+  AstExp *exp = parse_add_exp();
+  while (parser.current.type == TOKEN_LESS ||
+         parser.current.type == TOKEN_LESS_EQUAL ||
+         parser.current.type == TOKEN_GREATER ||
+         parser.current.type == TOKEN_GREATER_EQUAL) {
+    AstBinaryExp *binary_exp = new_ast_binary_exp();
+    binary_exp->lhs = exp;
+    binary_exp->op = token_type_to_binary_op_type(parser.current.type);
+    advance();
+    binary_exp->rhs = parse_add_exp();
+    exp = (AstExp *)binary_exp;
+  }
+  return exp;
+}
+
+// EqExp       ::= RelExp (("==" | "!=") RelExp)*;
+static AstExp *parse_eq_exp(void) {
+  AstExp *exp = parse_rel_exp();
+  while (parser.current.type == TOKEN_EQUAL ||
+         parser.current.type == TOKEN_NOT_EQUAL) {
+    AstBinaryExp *binary_exp = new_ast_binary_exp();
+    binary_exp->lhs = exp;
+    binary_exp->op = token_type_to_binary_op_type(parser.current.type);
+    advance();
+    binary_exp->rhs = parse_rel_exp();
+    exp = (AstExp *)binary_exp;
+  }
+  return exp;
+}
+
+// LAndExp     ::= EqExp ("&&" EqExp)*;
+static AstExp *parse_land_exp(void) {
+  AstExp *exp = parse_eq_exp();
+  while (parser.current.type == TOKEN_AND) {
+    AstBinaryExp *binary_exp = new_ast_binary_exp();
+    binary_exp->lhs = exp;
+    binary_exp->op = token_type_to_binary_op_type(parser.current.type);
+    advance();
+    binary_exp->rhs = parse_eq_exp();
+    exp = (AstExp *)binary_exp;
+  }
+  return exp;
+}
+
+// LOrExp      ::= LAndExp ("||" LAndExp)*;
+static AstExp *parse_lor_exp(void) {
+  AstExp *exp = parse_land_exp();
+  while (parser.current.type == TOKEN_OR) {
+    AstBinaryExp *binary_exp = new_ast_binary_exp();
+    binary_exp->lhs = exp;
+    binary_exp->op = token_type_to_binary_op_type(parser.current.type);
+    advance();
+    binary_exp->rhs = parse_land_exp();
+    exp = (AstExp *)binary_exp;
+  }
+  return exp;
+}
+
+// Exp         ::= LOrExp;
+static AstExp *parse_exp(void) { return parse_lor_exp(); }
 
 // Stmt        ::= "return" Exp ";";
 static AstStmt *parse_stmt(void) {

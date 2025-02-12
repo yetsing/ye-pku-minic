@@ -3,6 +3,39 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+const char *binary_op_type_to_string(BinaryOpType type) {
+  switch (type) {
+  case BinaryOpType_ADD:
+    return "+";
+  case BinaryOpType_SUB:
+    return "-";
+  case BinaryOpType_MUL:
+    return "*";
+  case BinaryOpType_DIV:
+    return "/";
+  case BinaryOpType_MOD:
+    return "%";
+  case BinaryOpType_EQ:
+    return "==";
+  case BinaryOpType_NE:
+    return "!=";
+  case BinaryOpType_LT:
+    return "<";
+  case BinaryOpType_LE:
+    return "<=";
+  case BinaryOpType_GT:
+    return ">";
+  case BinaryOpType_GE:
+    return ">=";
+  case BinaryOpType_AND:
+    return "&&";
+  case BinaryOpType_OR:
+    return "||";
+  default:
+    return "unknown";
+  }
+}
+
 void ast_number_dump(AstNumber *node, int indent) {
   printf("%d", node->number);
 }
@@ -35,7 +68,7 @@ AstUnaryExp *new_ast_unary_exp() {
 
 void ast_binary_exp_dump(AstBinaryExp *node, int indent) {
   printf("BinaryExp: {\n");
-  printf("%*s  op: %c,\n", indent, " ", node->op);
+  printf("%*s  op: %s,\n", indent, " ", binary_op_type_to_string(node->op));
   printf("%*s  lhs: ", indent, " ");
   node->lhs->dump((AstBase *)node->lhs, indent + 2);
   printf(",\n");

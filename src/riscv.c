@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "koopa.h"
 
@@ -15,11 +16,11 @@ static const char *register_names[] = {
 };
 static int register_index = 0;
 
-static void outputf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+__attribute__((format(printf, 1, 2))) static void outputf(const char *fmt, ...);
 static void outputf(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
-  //   vprintf(fmt, args);
+  // vprintf(fmt, args);
   vfprintf(fp, fmt, args);
   va_end(args);
 }
@@ -47,6 +48,7 @@ static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
 }
 
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n) {
+  assert(register_index < sizeof(register_names) / sizeof(register_names[0]));
   outputf("  li %s, %d\n", register_names[register_index], n.value);
   register_index++;
 }
@@ -63,8 +65,17 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     visit_koopa_raw_value(binary.rhs);
     rhs_register = register_names[register_index - 1];
   }
-  const char *result_register = register_names[register_index];
-  register_index++;
+  // 结果寄存器尽量服用 lhs 或 rhs 的寄存器
+  const char *result_register = "";
+  if (strcmp(rhs_register, "x0") != 0) {
+    result_register = rhs_register;
+  } else if (strcmp(lhs_register, "x0") != 0) {
+    result_register = lhs_register;
+  } else {
+    assert(register_index < sizeof(register_names) / sizeof(register_names[0]));
+    result_register = register_names[register_index];
+    register_index++;
+  }
   switch (binary.op) {
   case KOOPA_RBO_SUB:
     outputf("  sub %s, %s, %s\n", result_register, lhs_register, rhs_register);
@@ -86,6 +97,35 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     outputf("  seqz %s, %s\n", result_register, result_register);
     break;
   }
+  case KOOPA_RBO_NOT_EQ: {
+    outputf("  xor %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    outputf("  snez %s, %s\n", result_register, result_register);
+    break;
+  }
+  case KOOPA_RBO_LT: {
+    outputf("  slt %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
+  }
+  case KOOPA_RBO_LE: {
+    outputf("  slt %s, %s, %s\n", result_register, rhs_register, lhs_register);
+    outputf("  xori %s, %s, 1\n", result_register, result_register);
+    break;
+  }
+  case KOOPA_RBO_GT: {
+    outputf("  slt %s, %s, %s\n", result_register, rhs_register, lhs_register);
+    break;
+  }
+  case KOOPA_RBO_GE: {
+    outputf("  slt %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    outputf("  xori %s, %s, 1\n", result_register, result_register);
+    break;
+  }
+  case KOOPA_RBO_AND:
+    outputf("  and %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
+  case KOOPA_RBO_OR:
+    outputf("  or %s, %s, %s\n", result_register, lhs_register, rhs_register);
+    break;
   default:
     printf("visit_koopa_raw_binary unknown op: %d\n", binary.op);
     assert(false);
