@@ -8,10 +8,21 @@ typedef enum {
   AST_FUNC_TYPE,
   AST_IDENTIFIER,
   AST_STMT,
+  AST_EXP_STMT,
+  AST_CONST_DECL,
+  AST_CONST_DEF,
+  AST_RETURN_STMT,
   AST_BLOCK,
   AST_FUNC_DEF,
   AST_COMP_UNIT,
 } AstType;
+const char *ast_type_to_string(AstType type);
+
+typedef enum {
+  BType_UNKNOWN,
+  BType_INT,
+} BType;
+const char *btype_to_string(BType type);
 
 typedef enum {
   BinaryOpType_ADD,
@@ -65,20 +76,43 @@ typedef struct AstBinaryExp {
 } AstBinaryExp;
 AstBinaryExp *new_ast_binary_exp();
 
-typedef struct {
-  AstBase base;
-  AstExp *exp;
+typedef struct AstStmt AstStmt;
+typedef struct AstStmt {
+  AstType type;
+  DumpFunc dump;
+  AstStmt *next; // 使用链表结构存储多个语句
 } AstStmt;
-AstStmt *new_ast_stmt();
 
 typedef struct {
+  AstStmt base;
+  AstExp *exp;
+} AstExpStmt;
+AstExpStmt *new_ast_exp_stmt();
+
+typedef struct {
+  AstStmt base;
+  AstExp *exp;
+} AstReturnStmt;
+AstReturnStmt *new_ast_return_stmt();
+
+typedef struct AstConstDef AstConstDef;
+typedef struct AstConstDef {
   AstBase base;
   const char *name;
-} AstFuncType;
-AstFuncType *new_ast_func_type();
+  AstExp *exp;
+  AstConstDef *next; // 使用链表结构存储多个常量定义
+} AstConstDef;
+AstConstDef *new_ast_const_def();
 
 typedef struct {
-  AstBase base;
+  AstStmt base;
+  BType type;
+  AstConstDef *def;
+} AstConstDecl;
+AstConstDecl *new_ast_const_decl();
+
+typedef struct {
+  AstExp base;
   const char *name;
 } AstIdentifier;
 AstIdentifier *new_ast_identifier();
@@ -91,7 +125,7 @@ AstBlock *new_ast_block();
 
 typedef struct {
   AstBase base;
-  AstFuncType *func_type;
+  BType func_type;
   AstIdentifier *ident;
   AstBlock *block;
 } AstFuncDef;

@@ -25,6 +25,8 @@ typedef enum {
   TOKEN_NOT_EQUAL,     // !=
   TOKEN_AND,           // &&
   TOKEN_OR,            // ||
+  TOKEN_ASSIGN,        // =
+  TOKEN_COMMA,         // ,
 } TokenType;
 
 const char *token_type_to_string(TokenType type);

@@ -1,5 +1,6 @@
 #include "parse.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 
 #include "ast.h"
 #include "tokenize.h"
+#include "utils.h"
 
 typedef struct {
   Token current;
@@ -18,6 +20,7 @@ static Parser parser;
 static AstExp *parse_exp(void);
 static AstExp *parse_primary_exp(void);
 static AstNumber *parse_number(void);
+static AstIdentifier *parse_identifier(void);
 static AstExp *parse_unary_exp(void);
 static AstExp *parse_add_exp(void);
 static AstExp *parse_mul_exp(void);
@@ -35,22 +38,40 @@ static void consume(TokenType type) {
   if (parser.current.type == type) {
     advance();
   } else {
-    fprintf(stderr, "Syntax error: expected %s, got %s at line %d\n",
-            token_type_to_string(type),
-            token_type_to_string(parser.current.type), parser.current.line);
-    exit(1);
+    fatalf("Syntax error: expected %s, got %s at line %d\n",
+           token_type_to_string(type),
+           token_type_to_string(parser.current.type), parser.current.line);
   }
+}
+
+static bool try_consume(TokenType type) {
+  if (parser.current.type == type) {
+    advance();
+    return true;
+  }
+  return false;
 }
 
 static void match(const char *expected) {
   if (strncmp(parser.current.start, expected, parser.current.length) == 0) {
     advance();
   } else {
-    fprintf(stderr, "Syntax error: expected %s, got %.*s at line %d\n",
-            expected, parser.current.length, parser.current.start,
-            parser.current.line);
-    exit(1);
+    fatalf("Syntax error: expected %s, got %.*s at line %d\n", expected,
+           parser.current.length, parser.current.start, parser.current.line);
   }
+}
+
+static bool try_match(const char *expected) {
+  if (strncmp(parser.current.start, expected, parser.current.length) == 0) {
+    advance();
+    return true;
+  }
+  return false;
+}
+
+static bool current_is(TokenType type) { return parser.current.type == type; }
+static bool current_eq(const char *s) {
+  return strncmp(parser.current.start, s, parser.current.length) == 0;
 }
 
 BinaryOpType token_type_to_binary_op_type(TokenType type) {
@@ -123,6 +144,8 @@ static AstNumber *parse_number(void) {
 // PrimaryExp  ::= "(" Exp ")" | Number;
 static AstExp *parse_primary_exp(void) {
   switch (parser.current.type) {
+  case TOKEN_IDENTIFIER:
+    return (AstExp *)parse_identifier();
   case TOKEN_INTEGER:
     return (AstExp *)parse_number();
   case TOKEN_LPAREN:
@@ -245,20 +268,18 @@ static AstExp *parse_lor_exp(void) {
 static AstExp *parse_exp(void) { return parse_lor_exp(); }
 
 // Stmt        ::= "return" Exp ";";
-static AstStmt *parse_stmt(void) {
-  AstStmt *stmt = new_ast_stmt();
+static AstStmt *parse_return_stmt(void) {
+  AstReturnStmt *stmt = new_ast_return_stmt();
   match("return");
   stmt->exp = parse_exp();
   consume(TOKEN_SEMICOLON);
-  return stmt;
+  return (AstStmt *)stmt;
 }
 
 // FuncType  ::= "int";
-static AstFuncType *parse_func_type(void) {
-  AstFuncType *func_type = new_ast_func_type();
-  func_type->name = strndup(parser.current.start, parser.current.length);
+static BType parse_func_type(void) {
   match("int");
-  return func_type;
+  return BType_INT;
 }
 
 // IDENT;
@@ -269,11 +290,49 @@ static AstIdentifier *parse_identifier(void) {
   return ident;
 }
 
-// Block     ::= "{" Stmt "}";
+// ConstDecl   ::= "const" "int" IDENT "=" Exp ("," IDENT "=" Exp)* ";";
+static AstConstDecl *parse_const_decl(void) {
+  AstConstDecl *const_decl = new_ast_const_decl();
+  match("const");
+  match("int");
+  const_decl->type = BType_INT;
+  AstConstDef head;
+  AstConstDef *tail = &head;
+  do {
+    AstConstDef *def = new_ast_const_def();
+    def->name = strndup(parser.current.start, parser.current.length);
+    consume(TOKEN_IDENTIFIER);
+    match("=");
+    def->exp = parse_exp();
+    tail->next = def;
+    tail = def;
+  } while (try_consume(TOKEN_COMMA));
+  consume(TOKEN_SEMICOLON);
+  const_decl->def = head.next;
+  return const_decl;
+}
+
+// BlockItem     :: = Decl | Stmt;
+static AstStmt *parse_block_item(void) {
+  if (current_eq("const")) {
+    return (AstStmt *)parse_const_decl();
+  } else {
+    return parse_return_stmt();
+  }
+}
+
+// Block         ::= "{" {BlockItem} "}";
 static AstBlock *parse_block(void) {
   consume(TOKEN_LBRACE);
   AstBlock *block = new_ast_block();
-  block->stmt = parse_stmt();
+  AstStmt head;
+  AstStmt *tail = &head;
+  while (!current_is(TOKEN_RBRACE)) {
+    AstStmt *stmt = parse_block_item();
+    tail->next = stmt;
+    tail = stmt;
+  }
+  block->stmt = head.next;
   consume(TOKEN_RBRACE);
   return block;
 }

@@ -177,7 +177,13 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice) {
       const koopa_raw_value_t value = ptr;
       if (value->used_by.len > 0) {
         // 在处理 used_by 的时候，会将这个 value 也处理
-        // 所以这里不需要再处理
+        // 这里做个判断，避免重复处理
+        // 比如说这两条 IR 指令:
+        // %1 = add 1, 2
+        // ret %1
+        // basic block 里面会有 %1 = add 1, 2 和 ret %1 两条指令
+        // ret 指令里面也会指向 %1 = add 1, 2
+        // 如果不做判断，会导致 %1 = add 1, 2 被处理两次
         break;
       }
       visit_koopa_raw_value(ptr);

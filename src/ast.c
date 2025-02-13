@@ -1,7 +1,48 @@
 #include "ast.h"
+#include "utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+
+const char *ast_type_to_string(AstType type) {
+  switch (type) {
+  case AST_NUMBER:
+    return "number";
+  case AST_UNARY_EXP:
+    return "unary_exp";
+  case AST_BINARY_EXP:
+    return "binary_exp";
+  case AST_EXP_STMT:
+    return "exp_stmt";
+  case AST_RETURN_STMT:
+    return "return_stmt";
+  case AST_CONST_DEF:
+    return "const_def";
+  case AST_CONST_DECL:
+    return "const_decl";
+  case AST_IDENTIFIER:
+    return "identifier";
+  case AST_BLOCK:
+    return "block";
+  case AST_FUNC_DEF:
+    return "func_def";
+  case AST_COMP_UNIT:
+    return "comp_unit";
+  }
+  fatalf("Invalid AstType: %d\n", type);
+  return "";
+}
+
+const char *btype_to_string(BType type) {
+  switch (type) {
+  case BType_UNKNOWN:
+    return "unknown";
+  case BType_INT:
+    return "int";
+  }
+  fatalf("Invalid BType: %d\n", type);
+  return "";
+}
 
 const char *binary_op_type_to_string(BinaryOpType type) {
   switch (type) {
@@ -31,9 +72,9 @@ const char *binary_op_type_to_string(BinaryOpType type) {
     return "&&";
   case BinaryOpType_OR:
     return "||";
-  default:
-    return "unknown";
   }
+  fatalf("Invalid BinaryOpType: %d\n", type);
+  return "";
 }
 
 void ast_number_dump(AstNumber *node, int indent) {
@@ -88,31 +129,75 @@ AstBinaryExp *new_ast_binary_exp() {
   return node;
 }
 
-void ast_stmt_dump(AstStmt *node, int indent) {
-  printf("Stmt: {\n");
+void ast_exp_stmt_dump(AstExpStmt *node, int indent) {
+  printf("ExpStmt: {\n");
   printf("%*s  exp: ", indent, " ");
   node->exp->dump((AstBase *)node->exp, indent + 2);
   printf(",\n");
   printf("%*s}", indent, " ");
 }
 
-AstStmt *new_ast_stmt() {
-  AstStmt *node = malloc(sizeof(AstStmt));
-  node->base.type = AST_STMT;
-  node->base.dump = (DumpFunc)ast_stmt_dump;
+AstExpStmt *new_ast_exp_stmt() {
+  AstExpStmt *node = malloc(sizeof(AstExpStmt));
+  node->base.type = AST_EXP_STMT;
+  node->base.dump = (DumpFunc)ast_exp_stmt_dump;
   node->exp = NULL;
   return node;
 }
 
-void ast_func_type_dump(AstFuncType *node, int indent) {
-  printf("%s", node->name);
+void ast_return_stmt_dump(AstReturnStmt *node, int indent) {
+  printf("%*sReturnStmt: {\n", indent, " ");
+  printf("%*s  exp: ", indent, " ");
+  node->exp->dump((AstBase *)node->exp, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
 }
 
-AstFuncType *new_ast_func_type() {
-  AstFuncType *node = malloc(sizeof(AstFuncType));
-  node->base.type = AST_FUNC_TYPE;
-  node->base.dump = (DumpFunc)ast_func_type_dump;
+AstReturnStmt *new_ast_return_stmt() {
+  AstReturnStmt *node = malloc(sizeof(AstReturnStmt));
+  node->base.type = AST_RETURN_STMT;
+  node->base.dump = (DumpFunc)ast_return_stmt_dump;
+  node->exp = NULL;
+  return node;
+}
+
+void ast_const_def_dump(AstConstDef *node, int indent) {
+  printf("%*sConstDef: {\n", indent, " ");
+  printf("%*s  name: %s,\n", indent, " ", node->name);
+  printf("%*s  exp: ", indent, " ");
+  node->exp->dump((AstBase *)node->exp, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstConstDef *new_ast_const_def() {
+  AstConstDef *node = malloc(sizeof(AstConstDef));
+  node->base.type = AST_CONST_DEF;
+  node->base.dump = (DumpFunc)ast_const_def_dump;
   node->name = NULL;
+  node->exp = NULL;
+  return node;
+}
+
+void ast_const_decl_dump(AstConstDecl *node, int indent) {
+  printf("%*sConstDecl: {\n", indent, " ");
+  AstConstDef *def = node->def;
+  while (def) {
+    def->base.dump((AstBase *)def, indent + 2);
+    def = def->next;
+    if (def) {
+      printf(",\n");
+    }
+  }
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstConstDecl *new_ast_const_decl() {
+  AstConstDecl *node = malloc(sizeof(AstConstDecl));
+  node->base.type = AST_CONST_DECL;
+  node->base.dump = (DumpFunc)ast_const_decl_dump;
+  node->def = NULL;
   return node;
 }
 
@@ -130,9 +215,12 @@ AstIdentifier *new_ast_identifier() {
 
 void ast_block_dump(AstBlock *node, int indent) {
   printf("Block: {\n");
-  printf("%*s  stmt: ", indent, " ");
-  node->stmt->base.dump((AstBase *)node->stmt, indent + 2);
-  printf(",\n");
+  AstStmt *stmt = node->stmt;
+  while (stmt) {
+    stmt->dump((AstBase *)stmt, indent + 2);
+    printf(",\n");
+    stmt = stmt->next;
+  }
   printf("%*s}", indent, " ");
 }
 
@@ -146,9 +234,8 @@ AstBlock *new_ast_block() {
 
 void ast_func_def_dump(AstFuncDef *node, int indent) {
   printf("FuncDef: {\n");
-  printf("%*s  func_type: ", indent, " ");
-  node->func_type->base.dump((AstBase *)node->func_type, indent + 2);
-  printf(",\n");
+  printf("%*s  func_type: %s,\n", indent, " ",
+         btype_to_string(node->func_type));
   printf("%*s  ident: ", indent, " ");
   node->ident->base.dump((AstBase *)node->ident, indent + 2);
   printf(",\n");
@@ -162,18 +249,18 @@ AstFuncDef *new_ast_func_def() {
   AstFuncDef *node = malloc(sizeof(AstFuncDef));
   node->base.type = AST_FUNC_DEF;
   node->base.dump = (DumpFunc)ast_func_def_dump;
-  node->func_type = NULL;
+  node->func_type = BType_UNKNOWN;
   node->ident = NULL;
   node->block = NULL;
   return node;
 }
 
 void ast_comp_unit_dump(AstCompUnit *node, int indent) {
-  printf("CompUnit: {\n");
-  printf("  func_def: ");
+  printf("%*sCompUnit: {\n", indent, " ");
+  printf("%*s  func_def: ", indent, " ");
   node->func_def->base.dump((AstBase *)node->func_def, indent + 2);
   printf(",\n");
-  printf("}\n");
+  printf("%*s}\n", indent, " ");
 }
 
 AstCompUnit *new_ast_comp_unit() {

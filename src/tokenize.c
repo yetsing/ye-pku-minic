@@ -200,6 +200,10 @@ Token next_token(void) {
 
     char c = *tokenizer.current;
     switch (c) {
+    case ',': {
+      advance();
+      return (Token){TOKEN_COMMA, tokenizer.start, 1, tokenizer.line};
+    }
     case '<': {
       if (peek() == '=') {
         advance();
@@ -227,7 +231,7 @@ Token next_token(void) {
         return (Token){TOKEN_EQUAL, tokenizer.start, 2, tokenizer.line};
       } else {
         advance();
-        return (Token){TOKEN_EQUAL, tokenizer.start, 1, tokenizer.line};
+        return (Token){TOKEN_ASSIGN, tokenizer.start, 1, tokenizer.line};
       }
     }
     case '&': {
