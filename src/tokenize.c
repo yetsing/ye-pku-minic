@@ -52,6 +52,10 @@ const char *token_type_to_string(TokenType type) {
     return "AND";
   case TOKEN_OR:
     return "OR";
+  case TOKEN_ASSIGN:
+    return "ASSIGN";
+  case TOKEN_COMMA:
+    return "COMMA";
   }
   return "UNKNOWN";
 }

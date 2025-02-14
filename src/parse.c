@@ -61,7 +61,7 @@ static void match(const char *expected) {
   }
 }
 
-static bool try_match(const char *expected) {
+__attribute__((unused)) static bool try_match(const char *expected) {
   if (strncmp(parser.current.start, expected, parser.current.length) == 0) {
     advance();
     return true;
@@ -267,10 +267,20 @@ static AstExp *parse_lor_exp(void) {
 // Exp         ::= LOrExp;
 static AstExp *parse_exp(void) { return parse_lor_exp(); }
 
-// Stmt        ::= "return" Exp ";";
+// ReturnStmt        ::= "return" Exp ";";
 static AstStmt *parse_return_stmt(void) {
   AstReturnStmt *stmt = new_ast_return_stmt();
   match("return");
+  stmt->exp = parse_exp();
+  consume(TOKEN_SEMICOLON);
+  return (AstStmt *)stmt;
+}
+
+// AssignStmt        ::= IDENT "=" Exp ";";
+static AstStmt *parse_assign_stmt(void) {
+  AstAssignStmt *stmt = new_ast_assign_stmt();
+  stmt->lhs = (AstExp *)parse_identifier();
+  match("=");
   stmt->exp = parse_exp();
   consume(TOKEN_SEMICOLON);
   return (AstStmt *)stmt;
@@ -312,12 +322,45 @@ static AstConstDecl *parse_const_decl(void) {
   return const_decl;
 }
 
+// VarDecl       ::= "int" VarDef ("," VarDef)* ";";
+// VarDef        ::= IDENT | IDENT "=" InitVal;
+static AstVarDecl *parse_var_decl(void) {
+  AstVarDecl *var_decl = new_ast_var_decl();
+  match("int");
+  var_decl->type = BType_INT;
+  AstVarDef head;
+  AstVarDef *tail = &head;
+  do {
+    AstVarDef *def = new_ast_var_def();
+    def->name = strndup(parser.current.start, parser.current.length);
+    consume(TOKEN_IDENTIFIER);
+    if (try_consume(TOKEN_ASSIGN)) {
+      def->exp = parse_exp();
+    }
+    tail->next = def;
+    tail = def;
+  } while (try_consume(TOKEN_COMMA));
+  consume(TOKEN_SEMICOLON);
+  var_decl->def = head.next;
+  return var_decl;
+}
+
 // BlockItem     :: = Decl | Stmt;
+// Decl          ::= ConstDecl | VarDecl;
+// Stmt          ::= ReturnStmt | AssignStmt;
 static AstStmt *parse_block_item(void) {
   if (current_eq("const")) {
     return (AstStmt *)parse_const_decl();
-  } else {
+  } else if (current_eq("int")) {
+    return (AstStmt *)parse_var_decl();
+  } else if (current_eq("return")) {
     return parse_return_stmt();
+  } else if (current_is(TOKEN_IDENTIFIER)) {
+    return parse_assign_stmt();
+  } else {
+    fatalf("Syntax error: unexpected token %d at line %d\n",
+           parser.current.type, parser.current.line);
+    return NULL;
   }
 }
 

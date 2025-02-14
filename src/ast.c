@@ -12,14 +12,22 @@ const char *ast_type_to_string(AstType type) {
     return "unary_exp";
   case AST_BINARY_EXP:
     return "binary_exp";
+  case AST_STMT:
+    return "stmt";
   case AST_EXP_STMT:
     return "exp_stmt";
   case AST_RETURN_STMT:
     return "return_stmt";
+  case AST_ASSIGN_STMT:
+    return "assign_stmt";
   case AST_CONST_DEF:
     return "const_def";
   case AST_CONST_DECL:
     return "const_decl";
+  case AST_VAR_DEF:
+    return "var_def";
+  case AST_VAR_DECL:
+    return "var_decl";
   case AST_IDENTIFIER:
     return "identifier";
   case AST_BLOCK:
@@ -161,6 +169,26 @@ AstReturnStmt *new_ast_return_stmt() {
   return node;
 }
 
+void ast_assign_stmt_dump(AstAssignStmt *node, int indent) {
+  printf("%*sAssignStmt: {\n", indent, " ");
+  printf("%*s  lhs: ", indent, " ");
+  node->lhs->dump((AstBase *)node->lhs, indent + 2);
+  printf(",\n");
+  printf("%*s  exp: ", indent, " ");
+  node->exp->dump((AstBase *)node->exp, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstAssignStmt *new_ast_assign_stmt() {
+  AstAssignStmt *node = malloc(sizeof(AstAssignStmt));
+  node->base.type = AST_ASSIGN_STMT;
+  node->base.dump = (DumpFunc)ast_assign_stmt_dump;
+  node->lhs = NULL;
+  node->exp = NULL;
+  return node;
+}
+
 void ast_const_def_dump(AstConstDef *node, int indent) {
   printf("%*sConstDef: {\n", indent, " ");
   printf("%*s  name: %s,\n", indent, " ", node->name);
@@ -197,6 +225,49 @@ AstConstDecl *new_ast_const_decl() {
   AstConstDecl *node = malloc(sizeof(AstConstDecl));
   node->base.type = AST_CONST_DECL;
   node->base.dump = (DumpFunc)ast_const_decl_dump;
+  node->def = NULL;
+  return node;
+}
+
+void ast_var_def_dump(AstVarDef *node, int indent) {
+  printf("%*sVarDef: {\n", indent, " ");
+  printf("%*s  name: %s,\n", indent, " ", node->name);
+  if (node->exp) {
+    printf("%*s  exp: ", indent, " ");
+    node->exp->dump((AstBase *)node->exp, indent + 2);
+    printf(",\n");
+  }
+  printf("%*s}", indent, " ");
+}
+
+AstVarDef *new_ast_var_def() {
+  AstVarDef *node = malloc(sizeof(AstVarDef));
+  node->base.type = AST_VAR_DEF;
+  node->base.dump = (DumpFunc)ast_var_def_dump;
+  node->name = NULL;
+  node->exp = NULL;
+  return node;
+}
+
+void ast_var_decl_dump(AstVarDecl *node, int indent) {
+  printf("%*sVarDecl: {\n", indent, " ");
+  AstVarDef *def = node->def;
+  while (def) {
+    def->base.dump((AstBase *)def, indent + 2);
+    def = def->next;
+    if (def) {
+      printf(",\n");
+    }
+  }
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstVarDecl *new_ast_var_decl() {
+  AstVarDecl *node = malloc(sizeof(AstVarDecl));
+  node->base.type = AST_VAR_DECL;
+  node->base.dump = (DumpFunc)ast_var_decl_dump;
+  node->type = BType_UNKNOWN;
   node->def = NULL;
   return node;
 }

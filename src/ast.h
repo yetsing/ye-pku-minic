@@ -5,13 +5,15 @@ typedef enum {
   AST_NUMBER,
   AST_UNARY_EXP,
   AST_BINARY_EXP,
-  AST_FUNC_TYPE,
   AST_IDENTIFIER,
   AST_STMT,
   AST_EXP_STMT,
   AST_CONST_DECL,
   AST_CONST_DEF,
+  AST_VAR_DECL,
+  AST_VAR_DEF,
   AST_RETURN_STMT,
+  AST_ASSIGN_STMT,
   AST_BLOCK,
   AST_FUNC_DEF,
   AST_COMP_UNIT,
@@ -95,6 +97,13 @@ typedef struct {
 } AstReturnStmt;
 AstReturnStmt *new_ast_return_stmt();
 
+typedef struct {
+  AstStmt base;
+  AstExp *lhs;
+  AstExp *exp;
+} AstAssignStmt;
+AstAssignStmt *new_ast_assign_stmt();
+
 typedef struct AstConstDef AstConstDef;
 typedef struct AstConstDef {
   AstBase base;
@@ -110,6 +119,22 @@ typedef struct {
   AstConstDef *def;
 } AstConstDecl;
 AstConstDecl *new_ast_const_decl();
+
+typedef struct AstVarDef AstVarDef;
+typedef struct AstVarDef {
+  AstBase base;
+  const char *name;
+  AstExp *exp;
+  AstVarDef *next;
+} AstVarDef;
+AstVarDef *new_ast_var_def();
+
+typedef struct {
+  AstStmt base;
+  BType type;
+  AstVarDef *def;
+} AstVarDecl;
+AstVarDecl *new_ast_var_decl();
 
 typedef struct {
   AstExp base;

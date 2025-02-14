@@ -41,6 +41,20 @@ static Symbol *find_symbol(const char *name) {
   return NULL;
 }
 
+static Symbol *new_symbol(const char *name) {
+  if (find_symbol(name) != NULL) {
+    fprintf(stderr, "符号 %s 已经存在\n", name);
+    exit(1);
+  }
+  Symbol *symbol = malloc(sizeof(Symbol));
+  symbol->name = name;
+  symbol->is_const_value = false;
+  symbol->value = 0;
+  symbol->next = symbol_table_head.next;
+  symbol_table_head.next = symbol;
+  return symbol;
+}
+
 static int eval_symbol(const char *name) {
   Symbol *symbol = find_symbol(name);
   if (symbol == NULL) {
@@ -198,12 +212,9 @@ void optimize_const_decl(AstConstDecl *decl) {
   while (def) {
     if (is_const_exp(def->exp)) {
       int value = eval_const_exp(def->exp);
-      Symbol *symbol = malloc(sizeof(Symbol));
-      symbol->name = def->name;
+      Symbol *symbol = new_symbol(def->name);
       symbol->is_const_value = true;
       symbol->value = value;
-      symbol->next = symbol_table_head.next;
-      symbol_table_head.next = symbol;
     }
     def = def->next;
   }
@@ -211,7 +222,8 @@ void optimize_const_decl(AstConstDecl *decl) {
 
 // 优化 AST，工作包括：
 //  - 移除一元加法表达式
-//  - 常量计算，例如 1 + 2 -> 3
+//  - 数字计算，例如 1 + 2 -> 3
+//  - 常量替换，例如 const a = 1; const b = a + 2; -> const a = 1; const b = 3;
 void optimize_comp_unit(AstCompUnit *comp_unit) {
   AstFuncDef *func_def = comp_unit->func_def;
   AstBlock *block = func_def->block;
@@ -228,6 +240,19 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
     case AST_RETURN_STMT: {
       AstReturnStmt *return_stmt = (AstReturnStmt *)stmt;
       return_stmt->exp = optimize_exp(return_stmt->exp);
+      tail->next = stmt;
+      tail = stmt;
+      break;
+    }
+    case AST_VAR_DECL: {
+      AstVarDecl *var_decl = (AstVarDecl *)stmt;
+      AstVarDef *def = var_decl->def;
+      while (def) {
+        if (def->exp) {
+          def->exp = optimize_exp(def->exp);
+        }
+        def = def->next;
+      }
       tail->next = stmt;
       tail = stmt;
       break;
@@ -256,6 +281,16 @@ static char *exp_sign(AstExp *exp) {
     snprintf(buf, size, "%%%d", symbol_index - 1);
   }
   return buf;
+}
+
+static void codegen_identifier(AstIdentifier *ident) {
+  Symbol *symbol = find_symbol(ident->name);
+  if (symbol == NULL) {
+    fprintf(stderr, "未定义的符号 %s\n", ident->name);
+    exit(1);
+  }
+  outputf("  %%%d = load @%s\n", symbol_index, ident->name);
+  symbol_index++;
 }
 
 static void codegen_exp(AstExp *exp) {
@@ -382,6 +417,9 @@ static void codegen_exp(AstExp *exp) {
   case AST_NUMBER:
     // nothing to do
     break;
+  case AST_IDENTIFIER:
+    codegen_identifier((AstIdentifier *)exp);
+    break;
   default:
     fprintf(stderr, "未知的表达式类型 %s\n", ast_type_to_string(exp->type));
     exit(1);
@@ -393,17 +431,49 @@ static void codegen_return_stmt(AstReturnStmt *stmt) {
   outputf("  ret %s\n", exp_sign(stmt->exp));
 }
 
+static void codegen_assign_stmt(AstAssignStmt *stmt) {
+  if (stmt->lhs->type != AST_IDENTIFIER) {
+    fatalf("左值必须是标识符\n");
+  }
+  AstIdentifier *ident = (AstIdentifier *)stmt->lhs;
+  if (!find_symbol(ident->name)) {
+    fatalf("未定义的符号 %s\n", ident->name);
+  }
+  codegen_exp(stmt->exp);
+  outputf("  store %s, @%s\n", exp_sign(stmt->exp),
+          ((AstIdentifier *)stmt->lhs)->name);
+}
+
+static void codegen_var_decl(AstVarDecl *decl) {
+  AstVarDef *def = decl->def;
+  while (def) {
+    new_symbol(def->name);
+    outputf("  @%s = alloc i32\n", def->name);
+    if (def->exp) {
+      codegen_exp(def->exp);
+      outputf("  store %s, @%s\n", exp_sign(def->exp), def->name);
+    }
+    def = def->next;
+  }
+}
+
 static void codegen_stmt(AstStmt *stmt) {
   switch (stmt->type) {
   case AST_RETURN_STMT:
     codegen_return_stmt((AstReturnStmt *)stmt);
     break;
+  case AST_ASSIGN_STMT:
+    codegen_assign_stmt((AstAssignStmt *)stmt);
+    break;
   case AST_CONST_DECL:
     // 常量声明在优化阶段已经处理了
+    fatalf("不应该出现常量声明\n");
+    break;
+  case AST_VAR_DECL:
+    codegen_var_decl((AstVarDecl *)stmt);
     break;
   default:
-    fprintf(stderr, "未知的语句类型 %s\n", ast_type_to_string(stmt->type));
-    exit(1);
+    fatalf("未知的语句类型 %s\n", ast_type_to_string(stmt->type));
   }
 }
 
