@@ -25,10 +25,25 @@ typedef struct Symbol {
   const char *name;
   bool is_const_value;
   int value;
+  int level;    // 符号的作用域
   Symbol *next; // 指向下一个符号
 } Symbol;
 
-static Symbol symbol_table_head = {NULL, false, 0, NULL};
+static Symbol symbol_table_head = {NULL, false, 0, 0, NULL};
+
+static void reset_symbol_table() {
+  Symbol *symbol = symbol_table_head.next;
+  while (symbol) {
+    Symbol *next = symbol->next;
+    free(symbol);
+    symbol = next;
+  }
+  symbol_table_head.name = NULL;
+  symbol_table_head.is_const_value = false;
+  symbol_table_head.value = 0;
+  symbol_table_head.level = 0;
+  symbol_table_head.next = NULL;
+}
 
 static Symbol *find_symbol(const char *name) {
   Symbol *symbol = symbol_table_head.next;
@@ -42,7 +57,8 @@ static Symbol *find_symbol(const char *name) {
 }
 
 static Symbol *new_symbol(const char *name) {
-  if (find_symbol(name) != NULL) {
+  Symbol *found = find_symbol(name);
+  if (found != NULL && found->level == symbol_table_head.level) {
     fprintf(stderr, "符号 %s 已经存在\n", name);
     exit(1);
   }
@@ -50,6 +66,7 @@ static Symbol *new_symbol(const char *name) {
   symbol->name = name;
   symbol->is_const_value = false;
   symbol->value = 0;
+  symbol->level = symbol_table_head.level;
   symbol->next = symbol_table_head.next;
   symbol_table_head.next = symbol;
   return symbol;
@@ -66,6 +83,23 @@ static int eval_symbol(const char *name) {
     exit(1);
   }
   return symbol->value;
+}
+
+static void enter_scope() { symbol_table_head.level++; }
+
+static void leave_scope() {
+  Symbol *symbol = symbol_table_head.next;
+  while (symbol) {
+    Symbol *next = symbol->next;
+    if (symbol->level == symbol_table_head.level) {
+      free(symbol);
+    } else {
+      break;
+    }
+    symbol = next;
+  }
+  symbol_table_head.next = symbol;
+  symbol_table_head.level--;
 }
 
 // #region 优化 AST
@@ -220,16 +254,12 @@ void optimize_const_decl(AstConstDecl *decl) {
   }
 }
 
-// 优化 AST，工作包括：
-//  - 移除一元加法表达式
-//  - 数字计算，例如 1 + 2 -> 3
-//  - 常量替换，例如 const a = 1; const b = a + 2; -> const a = 1; const b = 3;
-void optimize_comp_unit(AstCompUnit *comp_unit) {
-  AstFuncDef *func_def = comp_unit->func_def;
-  AstBlock *block = func_def->block;
+void optimize_block(AstBlock *block) {
   AstStmt head;
+  head.next = NULL;
   AstStmt *tail = &head;
   AstStmt *stmt = block->stmt;
+  enter_scope();
   while (stmt) {
     switch (stmt->type) {
     case AST_CONST_DECL: {
@@ -257,6 +287,28 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
       tail = stmt;
       break;
     }
+    case AST_EXP_STMT: {
+      AstExpStmt *exp_stmt = (AstExpStmt *)stmt;
+      exp_stmt->exp = optimize_exp(exp_stmt->exp);
+      tail->next = stmt;
+      tail = stmt;
+      break;
+    }
+    case AST_ASSIGN_STMT: {
+      AstAssignStmt *assign_stmt = (AstAssignStmt *)stmt;
+      assign_stmt->exp = optimize_exp(assign_stmt->exp);
+      tail->next = stmt;
+      tail = stmt;
+      break;
+    }
+    case AST_EMPTY_STMT:
+      // nothing to do
+      break;
+    case AST_BLOCK:
+      optimize_block((AstBlock *)stmt);
+      tail->next = stmt;
+      tail = stmt;
+      break;
     default:
       tail->next = stmt;
       tail = stmt;
@@ -264,12 +316,31 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
     }
     stmt = stmt->next;
   }
+  leave_scope();
   block->stmt = head.next;
+}
+
+// 优化 AST，工作包括：
+//  - 移除一元加法表达式
+//  - 数字计算，例如 1 + 2 -> 3
+//  - 常量替换，例如 const a = 1; const b = a + 2; -> const a = 1; const b = 3;
+void optimize_comp_unit(AstCompUnit *comp_unit) {
+  AstFuncDef *func_def = comp_unit->func_def;
+  optimize_block(func_def->block);
+
+  // 重置符号表
+  reset_symbol_table();
+
+  printf("    === 优化后的 AST ===\n");
+  comp_unit->base.dump((AstBase *)comp_unit, 4);
+  printf("\n");
 }
 
 // #endregion
 
 // #region 生成 IR
+
+static void codegen_block(AstBlock *block);
 
 // 返回符号，表示表达式的结果
 static char *exp_sign(AstExp *exp) {
@@ -289,7 +360,7 @@ static void codegen_identifier(AstIdentifier *ident) {
     fprintf(stderr, "未定义的符号 %s\n", ident->name);
     exit(1);
   }
-  outputf("  %%%d = load @%s\n", symbol_index, ident->name);
+  outputf("  %%%d = load @%s_%d\n", symbol_index, symbol->name, symbol->level);
   symbol_index++;
 }
 
@@ -436,26 +507,30 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
     fatalf("左值必须是标识符\n");
   }
   AstIdentifier *ident = (AstIdentifier *)stmt->lhs;
-  if (!find_symbol(ident->name)) {
+  Symbol *symbol = find_symbol(ident->name);
+  if (symbol == NULL) {
     fatalf("未定义的符号 %s\n", ident->name);
   }
   codegen_exp(stmt->exp);
-  outputf("  store %s, @%s\n", exp_sign(stmt->exp),
-          ((AstIdentifier *)stmt->lhs)->name);
+  outputf("  store %s, @%s_%d\n", exp_sign(stmt->exp), symbol->name,
+          symbol->level);
 }
 
 static void codegen_var_decl(AstVarDecl *decl) {
   AstVarDef *def = decl->def;
   while (def) {
-    new_symbol(def->name);
-    outputf("  @%s = alloc i32\n", def->name);
+    Symbol *symbol = new_symbol(def->name);
+    outputf("  @%s_%d = alloc i32\n", symbol->name, symbol->level);
     if (def->exp) {
       codegen_exp(def->exp);
-      outputf("  store %s, @%s\n", exp_sign(def->exp), def->name);
+      outputf("  store %s, @%s_%d\n", exp_sign(def->exp), symbol->name,
+              symbol->level);
     }
     def = def->next;
   }
 }
+
+static void codegen_exp_stmt(AstExpStmt *stmt) { codegen_exp(stmt->exp); }
 
 static void codegen_stmt(AstStmt *stmt) {
   switch (stmt->type) {
@@ -472,22 +547,33 @@ static void codegen_stmt(AstStmt *stmt) {
   case AST_VAR_DECL:
     codegen_var_decl((AstVarDecl *)stmt);
     break;
+  case AST_BLOCK:
+    codegen_block((AstBlock *)stmt);
+    break;
+  case AST_EXP_STMT:
+    codegen_exp_stmt((AstExpStmt *)stmt);
+    break;
+  case AST_EMPTY_STMT:
+    // nothing to do
+    break;
   default:
     fatalf("未知的语句类型 %s\n", ast_type_to_string(stmt->type));
   }
 }
 
 static void codegen_block(AstBlock *block) {
-  outputf("%%entry:\n");
   AstStmt *stmt = block->stmt;
+  enter_scope();
   while (stmt) {
     codegen_stmt(stmt);
     stmt = stmt->next;
   }
+  leave_scope();
 }
 
 static void codegen_func_def(AstFuncDef *func_def) {
   outputf("fun @%s(): i32 {\n", func_def->ident->name);
+  outputf("%%entry:\n");
   codegen_block(func_def->block);
   outputf("}\n");
 }
@@ -511,9 +597,6 @@ void koopa_ir_codegen(AstCompUnit *comp_unit, const char *output_file) {
 
   // 优化 AST
   optimize_comp_unit(comp_unit);
-  printf("    === 优化后的 AST ===\n");
-  comp_unit->base.dump((AstBase *)comp_unit, 4);
-  printf("\n");
   // 生成 IR
   codegen_comp_unit(comp_unit);
   fclose(fp);

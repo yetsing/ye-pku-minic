@@ -14,6 +14,7 @@ typedef enum {
   AST_VAR_DEF,
   AST_RETURN_STMT,
   AST_ASSIGN_STMT,
+  AST_EMPTY_STMT,
   AST_BLOCK,
   AST_FUNC_DEF,
   AST_COMP_UNIT,
@@ -87,6 +88,11 @@ typedef struct AstStmt {
 
 typedef struct {
   AstStmt base;
+} AstEmptyStmt;
+AstEmptyStmt *new_ast_empty_stmt();
+
+typedef struct {
+  AstStmt base;
   AstExp *exp;
 } AstExpStmt;
 AstExpStmt *new_ast_exp_stmt();
@@ -143,7 +149,7 @@ typedef struct {
 AstIdentifier *new_ast_identifier();
 
 typedef struct {
-  AstBase base;
+  AstStmt base;
   AstStmt *stmt;
 } AstBlock;
 AstBlock *new_ast_block();

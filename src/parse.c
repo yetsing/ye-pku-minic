@@ -53,7 +53,8 @@ static bool try_consume(TokenType type) {
 }
 
 static void match(const char *expected) {
-  if (strncmp(parser.current.start, expected, parser.current.length) == 0) {
+  if (strlen(expected) == parser.current.length &&
+      strncmp(parser.current.start, expected, parser.current.length) == 0) {
     advance();
   } else {
     fatalf("Syntax error: expected %s, got %.*s at line %d\n", expected,
@@ -71,7 +72,14 @@ __attribute__((unused)) static bool try_match(const char *expected) {
 
 static bool current_is(TokenType type) { return parser.current.type == type; }
 static bool current_eq(const char *s) {
-  return strncmp(parser.current.start, s, parser.current.length) == 0;
+  return strlen(s) == parser.current.length &&
+         strncmp(parser.current.start, s, parser.current.length) == 0;
+}
+
+static bool peek_is(TokenType type) { return parser.next.type == type; }
+__attribute__((unused)) static bool peek_eq(const char *s) {
+  return strlen(s) == parser.next.length &&
+         strncmp(parser.next.start, s, parser.next.length) == 0;
 }
 
 BinaryOpType token_type_to_binary_op_type(TokenType type) {
@@ -108,6 +116,8 @@ BinaryOpType token_type_to_binary_op_type(TokenType type) {
     exit(1);
   }
 }
+
+static AstBlock *parse_block(void);
 
 // Number    ::= INT_CONST;
 static AstNumber *parse_number(void) {
@@ -280,7 +290,7 @@ static AstStmt *parse_return_stmt(void) {
 static AstStmt *parse_assign_stmt(void) {
   AstAssignStmt *stmt = new_ast_assign_stmt();
   stmt->lhs = (AstExp *)parse_identifier();
-  match("=");
+  consume(TOKEN_ASSIGN);
   stmt->exp = parse_exp();
   consume(TOKEN_SEMICOLON);
   return (AstStmt *)stmt;
@@ -345,9 +355,17 @@ static AstVarDecl *parse_var_decl(void) {
   return var_decl;
 }
 
+// ExpStmt       ::= Exp ";";
+static AstExpStmt *parse_exp_stmt(void) {
+  AstExpStmt *stmt = new_ast_exp_stmt();
+  stmt->exp = parse_exp();
+  consume(TOKEN_SEMICOLON);
+  return stmt;
+}
+
 // BlockItem     :: = Decl | Stmt;
 // Decl          ::= ConstDecl | VarDecl;
-// Stmt          ::= ReturnStmt | AssignStmt;
+// Stmt          ::= ReturnStmt | AssignStmt | Block | ExpStmt | ";";
 static AstStmt *parse_block_item(void) {
   if (current_eq("const")) {
     return (AstStmt *)parse_const_decl();
@@ -355,12 +373,15 @@ static AstStmt *parse_block_item(void) {
     return (AstStmt *)parse_var_decl();
   } else if (current_eq("return")) {
     return parse_return_stmt();
-  } else if (current_is(TOKEN_IDENTIFIER)) {
+  } else if (current_is(TOKEN_IDENTIFIER) && peek_is(TOKEN_ASSIGN)) {
     return parse_assign_stmt();
+  } else if (current_is(TOKEN_LBRACE)) {
+    return (AstStmt *)parse_block();
+  } else if (current_is(TOKEN_SEMICOLON)) {
+    advance();
+    return (AstStmt *)new_ast_empty_stmt();
   } else {
-    fatalf("Syntax error: unexpected token %d at line %d\n",
-           parser.current.type, parser.current.line);
-    return NULL;
+    return (AstStmt *)parse_exp_stmt();
   }
 }
 
@@ -369,6 +390,7 @@ static AstBlock *parse_block(void) {
   consume(TOKEN_LBRACE);
   AstBlock *block = new_ast_block();
   AstStmt head;
+  head.next = NULL;
   AstStmt *tail = &head;
   while (!current_is(TOKEN_RBRACE)) {
     AstStmt *stmt = parse_block_item();

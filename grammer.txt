@@ -15,7 +15,9 @@ FuncType      ::= "int";
 Block         ::= "{" {BlockItem} "}";
 BlockItem     ::= Decl | Stmt;
 Stmt          ::= LVal "=" Exp ";"
-                | "return" Exp ";";
+                | [Exp] ";"
+                | Block
+                | "return" [Exp] ";";
 
 Exp           ::= LOrExp;
 LVal          ::= IDENT;
