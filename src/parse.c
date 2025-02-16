@@ -28,6 +28,8 @@ static AstExp *parse_lor_exp(void);
 static AstExp *parse_land_exp(void);
 static AstExp *parse_eq_exp(void);
 static AstExp *parse_rel_exp(void);
+static AstStmt *parse_stmt(void);
+static AstBlock *parse_block(void);
 
 static void advance(void) {
   parser.current = parser.next;
@@ -116,8 +118,6 @@ BinaryOpType token_type_to_binary_op_type(TokenType type) {
     exit(1);
   }
 }
-
-static AstBlock *parse_block(void);
 
 // Number    ::= INT_CONST;
 static AstNumber *parse_number(void) {
@@ -363,15 +363,23 @@ static AstExpStmt *parse_exp_stmt(void) {
   return stmt;
 }
 
-// BlockItem     :: = Decl | Stmt;
-// Decl          ::= ConstDecl | VarDecl;
+// IfStmt       ::= "if" "(" Exp ")" Stmt ("else" Stmt)?;
+static AstIfStmt *parse_if_stmt(void) {
+  AstIfStmt *stmt = new_ast_if_stmt();
+  match("if");
+  consume(TOKEN_LPAREN);
+  stmt->condition = parse_exp();
+  consume(TOKEN_RPAREN);
+  stmt->then = parse_stmt();
+  if (try_match("else")) {
+    stmt->else_ = parse_stmt();
+  }
+  return stmt;
+}
+
 // Stmt          ::= ReturnStmt | AssignStmt | Block | ExpStmt | ";";
-static AstStmt *parse_block_item(void) {
-  if (current_eq("const")) {
-    return (AstStmt *)parse_const_decl();
-  } else if (current_eq("int")) {
-    return (AstStmt *)parse_var_decl();
-  } else if (current_eq("return")) {
+static AstStmt *parse_stmt(void) {
+  if (current_eq("return")) {
     return parse_return_stmt();
   } else if (current_is(TOKEN_IDENTIFIER) && peek_is(TOKEN_ASSIGN)) {
     return parse_assign_stmt();
@@ -380,8 +388,32 @@ static AstStmt *parse_block_item(void) {
   } else if (current_is(TOKEN_SEMICOLON)) {
     advance();
     return (AstStmt *)new_ast_empty_stmt();
+  } else if (current_eq("if")) {
+    return (AstStmt *)parse_if_stmt();
   } else {
     return (AstStmt *)parse_exp_stmt();
+  }
+}
+
+// Decl          ::= ConstDecl | VarDecl;
+static AstStmt *parse_decl(void) {
+  if (current_eq("const")) {
+    return (AstStmt *)parse_const_decl();
+  } else if (current_eq("int")) {
+    return (AstStmt *)parse_var_decl();
+  } else {
+    fatalf("Syntax error: expected const or int, got %.*s at line %d\n",
+           parser.current.length, parser.current.start, parser.current.line);
+    return NULL;
+  }
+}
+
+// BlockItem     :: = Decl | Stmt;
+static AstStmt *parse_block_item(void) {
+  if (current_eq("const") || current_eq("int")) {
+    return parse_decl();
+  } else {
+    return parse_stmt();
   }
 }
 

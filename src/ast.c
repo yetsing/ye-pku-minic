@@ -38,6 +38,8 @@ const char *ast_type_to_string(AstType type) {
     return "comp_unit";
   case AST_EMPTY_STMT:
     return "empty_stmt";
+  case AST_IF_STMT:
+    return "if_stmt";
   }
   fatalf("Invalid AstType: %d\n", type);
   return "";
@@ -136,6 +138,32 @@ AstBinaryExp *new_ast_binary_exp() {
   node->op = 0;
   node->lhs = NULL;
   node->rhs = NULL;
+  return node;
+}
+
+void ast_if_stmt_dump(AstIfStmt *node, int indent) {
+  printf("%*sIfStmt: {\n", indent, " ");
+  printf("%*s  condition: ", indent, " ");
+  node->condition->dump((AstBase *)node->condition, indent + 2);
+  printf(",\n");
+  printf("%*s  then: ", indent, " ");
+  node->then->dump((AstBase *)node->then, indent + 2);
+  printf(",\n");
+  if (node->else_) {
+    printf("%*s  else: ", indent, " ");
+    node->else_->dump((AstBase *)node->else_, indent + 2);
+    printf(",\n");
+  }
+  printf("%*s}", indent, " ");
+}
+
+AstIfStmt *new_ast_if_stmt() {
+  AstIfStmt *node = calloc(1, sizeof(AstIfStmt));
+  node->base.type = AST_IF_STMT;
+  node->base.dump = (DumpFunc)ast_if_stmt_dump;
+  node->condition = NULL;
+  node->then = NULL;
+  node->else_ = NULL;
   return node;
 }
 
