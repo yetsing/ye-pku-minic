@@ -14,6 +14,8 @@ FILE *fp = NULL;
 int temp_sign_index = 0;
 // if 计数，用来生成唯一的标签
 int if_index = 0;
+// 逻辑运算（ && || ）计数，用来生成唯一的标签
+int logic_index = 0;
 bool output_ret_inst = false;
 
 static bool starts_with(const char *str, const char *prefix) {
@@ -381,6 +383,7 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
 
 // #region 生成 IR
 
+static void codegen_exp(AstExp *exp);
 static void codegen_block(AstBlock *block);
 static void codegen_stmt(AstStmt *stmt);
 
@@ -409,6 +412,180 @@ static void codegen_identifier(AstIdentifier *ident) {
   temp_sign_index++;
 }
 
+static void codegen_binary_exp(AstBinaryExp *exp) {
+  // 短路求值
+  switch (exp->op) {
+  case BinaryOpType_AND: {
+    /*
+      a && b 可以变成下面的语句
+      int result = 0;
+      if (a != 0) {
+        result = b != 0;
+      }
+    */
+    logic_index++;
+    int current_logic_index = logic_index;
+    // int result = 0
+    outputf("  %%result_%d = alloc i32\n", current_logic_index);
+    outputf("  store 0, %%result_%d\n", current_logic_index);
+    codegen_exp(exp->lhs);
+    char *lhs = exp_sign(exp->lhs);
+    // if (a != 0) {
+    //   result = b != 0;
+    // }
+    outputf("  br %s, %%and_true_%d, %%and_end_%d\n", lhs, current_logic_index,
+            current_logic_index);
+    outputf("%%and_true_%d:\n", current_logic_index);
+    codegen_exp(exp->rhs);
+    char *rhs = exp_sign(exp->rhs);
+    outputf("  %%%d = ne %s, 0\n", temp_sign_index, rhs);
+    outputf("  store %%%d, %%result_%d\n", temp_sign_index,
+            current_logic_index);
+    outputf("  jump %%and_end_%d\n", current_logic_index);
+    temp_sign_index++;
+    outputf("%%and_end_%d:\n", current_logic_index);
+    // 把结果放到临时值
+    outputf("  %%%d = load %%result_%d\n", temp_sign_index,
+            current_logic_index);
+    temp_sign_index++;
+    free(lhs);
+    free(rhs);
+    return;
+  }
+  case BinaryOpType_OR: {
+    /*
+      a || b 可以变成下面的语句
+      int result = 1;
+      if (a == 0) {
+        result = b != 0;
+      }
+    */
+    logic_index++;
+    int current_logic_index = logic_index;
+    // int result = 1
+    outputf("  %%result_%d = alloc i32\n", current_logic_index);
+    outputf("  store 1, %%result_%d\n", current_logic_index);
+    codegen_exp(exp->lhs);
+    char *lhs = exp_sign(exp->lhs);
+    // if (a == 0) {
+    //   result = b != 0;
+    // }
+    outputf("  br %s, %%or_end_%d, %%or_false_%d\n", lhs, current_logic_index,
+            current_logic_index);
+    outputf("%%or_false_%d:\n", current_logic_index);
+    codegen_exp(exp->rhs);
+    char *rhs = exp_sign(exp->rhs);
+    outputf("  %%%d = ne %s, 0\n", temp_sign_index, rhs);
+    outputf("  store %%%d, %%result_%d\n", temp_sign_index,
+            current_logic_index);
+    outputf("  jump %%or_end_%d\n", current_logic_index);
+    temp_sign_index++;
+    outputf("%%or_end_%d:\n", current_logic_index);
+    // 把结果放到临时值
+    outputf("  %%%d = load %%result_%d\n", temp_sign_index,
+            current_logic_index);
+    temp_sign_index++;
+    free(lhs);
+    free(rhs);
+    return;
+  }
+  default:
+    break;
+  }
+
+  codegen_exp(exp->lhs);
+  char *lhs = exp_sign(exp->lhs);
+  codegen_exp(exp->rhs);
+  char *rhs = exp_sign(exp->rhs);
+  switch (exp->op) {
+  case BinaryOpType_ADD: {
+    outputf("  %%%d = add %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_SUB: {
+    outputf("  %%%d = sub %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_MUL: {
+    outputf("  %%%d = mul %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_DIV: {
+    outputf("  %%%d = div %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_MOD: {
+    outputf("  %%%d = mod %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_EQ: {
+    outputf("  %%%d = eq %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_NE: {
+    outputf("  %%%d = ne %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_LT: {
+    outputf("  %%%d = lt %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_LE: {
+    outputf("  %%%d = le %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_GT: {
+    outputf("  %%%d = gt %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_GE: {
+    outputf("  %%%d = ge %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_AND: {
+    // a && b
+    // r1 = a != 0
+    // r2 = b != 0
+    // r3 = r1 & r2
+    outputf("  %%%d = ne %s, 0\n", temp_sign_index, lhs);
+    temp_sign_index++;
+    outputf("  %%%d = ne %s, 0\n", temp_sign_index, rhs);
+    temp_sign_index++;
+    outputf("  %%%d = and %%%d, %%%d\n", temp_sign_index, temp_sign_index - 2,
+            temp_sign_index - 1);
+    temp_sign_index++;
+    break;
+  }
+  case BinaryOpType_OR: {
+    // a || b
+    // r1 = a | b
+    // r2 = r1 != 0
+    outputf("  %%%d = or %s, %s\n", temp_sign_index, lhs, rhs);
+    temp_sign_index++;
+    outputf("  %%%d = ne %%%d, 0\n", temp_sign_index, temp_sign_index - 1);
+    temp_sign_index++;
+    break;
+  }
+
+  default:
+    fprintf(stderr, "未知的二元运算符 %c\n", exp->op);
+    exit(1);
+  }
+  free(lhs);
+  free(rhs);
+}
+
 static void codegen_exp(AstExp *exp) {
   switch (exp->type) {
   case AST_UNARY_EXP: {
@@ -435,98 +612,7 @@ static void codegen_exp(AstExp *exp) {
     break;
   }
   case AST_BINARY_EXP: {
-    AstBinaryExp *binary_exp = (AstBinaryExp *)exp;
-    codegen_exp(binary_exp->lhs);
-    char *lhs = exp_sign(binary_exp->lhs);
-    codegen_exp(binary_exp->rhs);
-    char *rhs = exp_sign(binary_exp->rhs);
-    switch (binary_exp->op) {
-    case BinaryOpType_ADD: {
-      outputf("  %%%d = add %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_SUB: {
-      outputf("  %%%d = sub %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_MUL: {
-      outputf("  %%%d = mul %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_DIV: {
-      outputf("  %%%d = div %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_MOD: {
-      outputf("  %%%d = mod %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_EQ: {
-      outputf("  %%%d = eq %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_NE: {
-      outputf("  %%%d = ne %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_LT: {
-      outputf("  %%%d = lt %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_LE: {
-      outputf("  %%%d = le %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_GT: {
-      outputf("  %%%d = gt %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_GE: {
-      outputf("  %%%d = ge %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_AND: {
-      // a && b
-      // r1 = a != 0
-      // r2 = b != 0
-      // r3 = r1 & r2
-      outputf("  %%%d = ne %s, 0\n", temp_sign_index, lhs);
-      temp_sign_index++;
-      outputf("  %%%d = ne %s, 0\n", temp_sign_index, rhs);
-      temp_sign_index++;
-      outputf("  %%%d = and %%%d, %%%d\n", temp_sign_index, temp_sign_index - 2,
-              temp_sign_index - 1);
-      temp_sign_index++;
-      break;
-    }
-    case BinaryOpType_OR: {
-      // a || b
-      // r1 = a | b
-      // r2 = r1 != 0
-      outputf("  %%%d = or %s, %s\n", temp_sign_index, lhs, rhs);
-      temp_sign_index++;
-      outputf("  %%%d = ne %%%d, 0\n", temp_sign_index, temp_sign_index - 1);
-      temp_sign_index++;
-      break;
-    }
-
-    default:
-      fprintf(stderr, "未知的二元运算符 %c\n", binary_exp->op);
-      exit(1);
-    }
-    free(lhs);
-    free(rhs);
+    codegen_binary_exp((AstBinaryExp *)exp);
     break;
   }
 
