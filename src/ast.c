@@ -142,7 +142,7 @@ AstBinaryExp *new_ast_binary_exp() {
 }
 
 void ast_if_stmt_dump(AstIfStmt *node, int indent) {
-  printf("%*sIfStmt: {\n", indent, " ");
+  printf("IfStmt: {\n");
   printf("%*s  condition: ", indent, " ");
   node->condition->dump((AstBase *)node->condition, indent + 2);
   printf(",\n");
@@ -168,7 +168,7 @@ AstIfStmt *new_ast_if_stmt() {
 }
 
 void ast_empty_stmt_dump(AstEmptyStmt *node, int indent) {
-  printf("%*sEmptyStmt", indent, " ");
+  printf("EmptyStmt");
 }
 
 AstEmptyStmt *new_ast_empty_stmt() {
@@ -195,7 +195,7 @@ AstExpStmt *new_ast_exp_stmt() {
 }
 
 void ast_return_stmt_dump(AstReturnStmt *node, int indent) {
-  printf("%*sReturnStmt: {\n", indent, " ");
+  printf("ReturnStmt: {\n");
   if (node->exp) {
     printf("%*s  exp: ", indent, " ");
     node->exp->dump((AstBase *)node->exp, indent + 2);
@@ -213,7 +213,7 @@ AstReturnStmt *new_ast_return_stmt() {
 }
 
 void ast_assign_stmt_dump(AstAssignStmt *node, int indent) {
-  printf("%*sAssignStmt: {\n", indent, " ");
+  printf("AssignStmt: {\n");
   printf("%*s  lhs: ", indent, " ");
   node->lhs->dump((AstBase *)node->lhs, indent + 2);
   printf(",\n");
@@ -233,7 +233,7 @@ AstAssignStmt *new_ast_assign_stmt() {
 }
 
 void ast_const_def_dump(AstConstDef *node, int indent) {
-  printf("%*sConstDef: {\n", indent, " ");
+  printf("ConstDef: {\n");
   printf("%*s  name: %s,\n", indent, " ", node->name);
   printf("%*s  exp: ", indent, " ");
   node->exp->dump((AstBase *)node->exp, indent + 2);
@@ -252,9 +252,10 @@ AstConstDef *new_ast_const_def() {
 }
 
 void ast_const_decl_dump(AstConstDecl *node, int indent) {
-  printf("%*sConstDecl: {\n", indent, " ");
+  printf("ConstDecl: {\n");
   AstConstDef *def = node->def;
   while (def) {
+    printf("%*s  ", indent, " ");
     def->base.dump((AstBase *)def, indent + 2);
     def = def->next;
     if (def) {
@@ -274,7 +275,7 @@ AstConstDecl *new_ast_const_decl() {
 }
 
 void ast_var_def_dump(AstVarDef *node, int indent) {
-  printf("%*sVarDef: {\n", indent, " ");
+  printf("VarDef: {\n");
   printf("%*s  name: %s,\n", indent, " ", node->name);
   if (node->exp) {
     printf("%*s  exp: ", indent, " ");
@@ -294,9 +295,10 @@ AstVarDef *new_ast_var_def() {
 }
 
 void ast_var_decl_dump(AstVarDecl *node, int indent) {
-  printf("%*sVarDecl: {\n", indent, " ");
+  printf("VarDecl: {\n");
   AstVarDef *def = node->def;
   while (def) {
+    printf("%*s  ", indent, " ");
     def->base.dump((AstBase *)def, indent + 2);
     printf(",\n");
     def = def->next;
@@ -326,9 +328,10 @@ AstIdentifier *new_ast_identifier() {
 }
 
 void ast_block_dump(AstBlock *node, int indent) {
-  printf("%*sBlock: {\n", indent, " ");
+  printf("Block: {\n");
   AstStmt *stmt = node->stmt;
   while (stmt) {
+    printf("%*s  ", indent, " ");
     stmt->dump((AstBase *)stmt, indent + 2);
     printf(",\n");
     stmt = stmt->next;
@@ -345,7 +348,7 @@ AstBlock *new_ast_block() {
 }
 
 void ast_func_def_dump(AstFuncDef *node, int indent) {
-  printf("%*sFuncDef: {\n", indent, " ");
+  printf("FuncDef: {\n");
   printf("%*s  func_type: %s,\n", indent, " ",
          btype_to_string(node->func_type));
   printf("%*s  ident: ", indent, " ");

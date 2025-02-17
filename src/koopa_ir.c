@@ -98,8 +98,7 @@ static const char *symbol_unique_name(Symbol *symbol) {
 static int eval_symbol(const char *name) {
   Symbol *symbol = find_symbol(name);
   if (symbol == NULL) {
-    fprintf(stderr, "未定义的符号 %s\n", name);
-    exit(1);
+    fatalf("eval 未定义的符号 %s\n", name);
   }
   if (!symbol->is_const_value) {
     fprintf(stderr, "符号 %s 不是常量\n", name);
@@ -351,6 +350,11 @@ void optimize_block(AstBlock *block) {
       tail = stmt;
       break;
     }
+    if (stmt->type == AST_RETURN_STMT) {
+      // return 之后的语句不会执行到，直接移除
+      stmt->next = NULL;
+      break;
+    }
     stmt = stmt->next;
   }
   leave_scope();
@@ -397,8 +401,7 @@ static char *exp_sign(AstExp *exp) {
 static void codegen_identifier(AstIdentifier *ident) {
   Symbol *symbol = find_symbol(ident->name);
   if (symbol == NULL) {
-    fprintf(stderr, "未定义的符号 %s\n", ident->name);
-    exit(1);
+    fatalf("访问未定义的符号 %s\n", ident->name);
   }
   const char *name = symbol_unique_name(symbol);
   outputf("  %%%d = load %s\n", temp_sign_index, name);
@@ -551,7 +554,7 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
   AstIdentifier *ident = (AstIdentifier *)stmt->lhs;
   Symbol *symbol = find_symbol(ident->name);
   if (symbol == NULL) {
-    fatalf("未定义的符号 %s\n", ident->name);
+    fatalf("赋值未定义的符号 %s\n", ident->name);
   }
   codegen_exp(stmt->exp);
   const char *name = symbol_unique_name(symbol);

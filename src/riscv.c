@@ -11,11 +11,6 @@
 #include "utils.h"
 
 static FILE *fp;
-static const char *register_names[] = {
-    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "a0",
-    "a1", "a2", "a3", "a4", "a5", "a6", "a7",
-};
-static int register_index = 0;
 static int stack_index = -1; // 给临时变量计数用的
 static size_t stack_size = 0;
 
@@ -76,6 +71,8 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func);
 static void visit_koopa_raw_slice(const koopa_raw_slice_t slice);
 static void visit_koopa_raw_program(const koopa_raw_program_t program);
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary);
+static void visit_koopa_raw_branch(const koopa_raw_branch_t branch);
+static void visit_koopa_raw_jump(const koopa_raw_jump_t jump);
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("\n  # === return ===\n");
@@ -98,8 +95,7 @@ static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
 }
 
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n) {
-  assert(register_index < sizeof(register_names) / sizeof(register_names[0]));
-  outputf("  li %s, %d\n", register_names[register_index], n.value);
+  outputf("  li t0, %d\n", n.value);
 }
 
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
@@ -218,6 +214,20 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
   outputf("  sw t0, %d(sp)\n", get_offset(store.dest->name));
 }
 
+static void visit_koopa_raw_branch(const koopa_raw_branch_t branch) {
+  outputf("\n  # === branch ===\n");
+  visit_koopa_raw_value(branch.cond);
+  // 表达式的结果会放在 t0 寄存器，所以不需要额外的操作
+  // +1 是为了跳过基本块名前的 %
+  outputf("  bnez t0, %s\n", branch.true_bb->name + 1);
+  outputf("  j %s\n", branch.false_bb->name + 1);
+  outputf("  # === branch end ===\n");
+}
+
+static void visit_koopa_raw_jump(const koopa_raw_jump_t jump) {
+  outputf("  j %s\n", jump.target->name + 1);
+}
+
 static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   koopa_raw_value_kind_t kind = value->kind;
   switch (kind.tag) {
@@ -240,6 +250,12 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
     // 分配局部变量
     // nothing to do
     break;
+  case KOOPA_RVT_BRANCH:
+    visit_koopa_raw_branch(kind.data.branch);
+    break;
+  case KOOPA_RVT_JUMP:
+    visit_koopa_raw_jump(kind.data.jump);
+    break;
   }
   default:
     printf("visit_koopa_raw_value unknown kind: %d\n", kind.tag);
@@ -248,6 +264,7 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
 }
 
 static void visit_koopa_raw_basic_block(const koopa_raw_basic_block_t block) {
+  outputf("\n%s:\n", block->name + 1); // + 1 是为了跳过基本块名前的 %
   visit_koopa_raw_slice(block->insts);
 }
 
