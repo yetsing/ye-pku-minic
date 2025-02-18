@@ -17,6 +17,8 @@ typedef enum {
   AST_EMPTY_STMT,
   AST_IF_STMT,
   AST_WHILE_STMT,
+  AST_BREAK_STMT,
+  AST_CONTINUE_STMT,
   AST_BLOCK,
   AST_FUNC_DEF,
   AST_COMP_UNIT,
@@ -87,6 +89,16 @@ typedef struct AstStmt {
   DumpFunc dump;
   AstStmt *next; // 使用链表结构存储多个语句
 } AstStmt;
+
+typedef struct {
+  AstStmt base;
+} AstBreakStmt;
+AstBreakStmt *new_ast_break_stmt();
+
+typedef struct {
+  AstStmt base;
+} AstContinueStmt;
+AstContinueStmt *new_ast_continue_stmt();
 
 typedef struct {
   AstStmt base;

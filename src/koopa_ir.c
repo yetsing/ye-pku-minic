@@ -16,6 +16,10 @@ int temp_sign_index = 0;
 int if_index = 0;
 // while 计数，用来生成唯一的标签
 int while_index = 0;
+// while body 计数，用来给 break continue 生成唯一标签
+int while_body_index = 0;
+// while 栈结构，用来辅助 break continue 生成
+IntStack while_stack;
 // 逻辑运算（ && || ）计数，用来生成唯一的标签
 int logic_index = 0;
 bool output_ret_inst = false;
@@ -707,21 +711,56 @@ static void codegen_if_stmt(AstIfStmt *stmt) {
 static void codegen_while_stmt(AstWhileStmt *stmt) {
   while_index++;
   int current_index = while_index;
+  while_body_index = 0;
+  int_stack_push(&while_stack, current_index);
+
   outputf("  jump %%while_entry_%d\n", current_index);
-  outputf("%%while_entry_%d:\n", current_index);
+  outputf("\n%%while_entry_%d:\n", current_index);
   codegen_exp(stmt->condition);
   outputf("  br %s, %%while_body_%d, %%while_end_%d\n",
           exp_sign(stmt->condition), current_index, current_index);
-  outputf("%%while_body_%d:\n", current_index);
+  outputf("\n%%while_body_%d:\n", current_index);
   codegen_stmt(stmt->body);
   if (!output_ret_inst) {
     outputf("  jump %%while_entry_%d\n", current_index);
   }
-  outputf("%%while_end_%d:\n", current_index);
+  outputf("\n%%while_end_%d:\n", current_index);
+
+  int_stack_pop(&while_stack);
+}
+
+static void codegen_break_stmt(AstBreakStmt *stmt) {
+  if (int_stack_empty(&while_stack)) {
+    fatalf("break 只能出现在循环内\n");
+  }
+  outputf("  jump %%while_end_%d\n", int_stack_top(&while_stack));
+  while_body_index++;
+  int current_index = while_body_index;
+  // jump 指令结束了前一个 basic block ，需要新起一个 basic block
+  outputf("\n%%while_body_%d_%d:\n", int_stack_top(&while_stack),
+          current_index);
+}
+
+static void codegen_continue_stmt(AstContinueStmt *stmt) {
+  if (int_stack_empty(&while_stack)) {
+    fatalf("continue 只能出现在循环内\n");
+  }
+  outputf("  jump %%while_entry_%d\n", int_stack_top(&while_stack));
+  while_body_index++;
+  int current_index = while_body_index;
+  // jump 指令结束了前一个 basic block ，需要新起一个 basic block
+  outputf("\n%%while_body_%d_%d:\n", int_stack_top(&while_stack),
+          current_index);
 }
 
 static void codegen_stmt(AstStmt *stmt) {
   switch (stmt->type) {
+  case AST_BREAK_STMT:
+    codegen_break_stmt((AstBreakStmt *)stmt);
+    break;
+  case AST_CONTINUE_STMT:
+    codegen_continue_stmt((AstContinueStmt *)stmt);
+    break;
   case AST_WHILE_STMT:
     codegen_while_stmt((AstWhileStmt *)stmt);
     break;
@@ -782,7 +821,19 @@ static void codegen_comp_unit(AstCompUnit *comp_unit) {
 
 // #endregion
 
+static void init(void) {
+  temp_sign_index = 0;
+  if_index = 0;
+  while_index = 0;
+  while_body_index = 0;
+  int_stack_init(&while_stack);
+  logic_index = 0;
+  output_ret_inst = false;
+}
+
 void koopa_ir_codegen(AstCompUnit *comp_unit, const char *output_file) {
+  init();
+
   fp = fopen(output_file, "w");
   if (fp == NULL) {
     fprintf(stderr, "无法打开文件 %s\n", output_file);

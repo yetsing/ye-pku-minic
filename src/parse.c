@@ -389,13 +389,31 @@ static AstWhileStmt *parse_while_stmt(void) {
   return stmt;
 }
 
-// Stmt          ::= ReturnStmt
-//                 | AssignStmt
+// BreakStmt     ::= "break" ";" ;
+static AstBreakStmt *parse_break_stmt(void) {
+  AstBreakStmt *stmt = new_ast_break_stmt();
+  match("break");
+  consume(TOKEN_SEMICOLON);
+  return stmt;
+}
+
+// ContinueStmt  ::= "continue" ";" ;
+static AstContinueStmt *parse_continue_stmt(void) {
+  AstContinueStmt *stmt = new_ast_continue_stmt();
+  match("continue");
+  consume(TOKEN_SEMICOLON);
+  return stmt;
+}
+
+// Stmt          ::= AssignStmt
 //                 | Block
 //                 | ExpStmt
 //                 | ";"
 //                 | IfStmt
-//                 | WhileStmt;
+//                 | BreakStmt
+//                 | ContinueStmt
+//                 | WhileStmt
+//                 | ReturnStmt;
 static AstStmt *parse_stmt(void) {
   if (current_eq("return")) {
     return parse_return_stmt();
@@ -410,6 +428,10 @@ static AstStmt *parse_stmt(void) {
     return (AstStmt *)parse_if_stmt();
   } else if (current_eq("while")) {
     return (AstStmt *)parse_while_stmt();
+  } else if (current_eq("continue")) {
+    return (AstStmt *)parse_continue_stmt();
+  } else if (current_eq("break")) {
+    return (AstStmt *)parse_break_stmt();
   } else {
     return (AstStmt *)parse_exp_stmt();
   }

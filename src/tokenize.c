@@ -71,7 +71,7 @@ typedef struct Tokenizer {
 
 static Tokenizer tokenizer;
 static char *keywords[] = {
-    "const", "int", "if", "else", "return",
+    "const", "int", "if", "else", "return", "while", "continue", "break",
 };
 
 void init_tokenizer(const char *input) {

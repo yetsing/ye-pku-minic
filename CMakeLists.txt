@@ -15,7 +15,8 @@ if(MSVC)
   add_compile_options(/W3)
 else()
   # disable warnings caused by old version of Flex
-  add_compile_options(-Wall -Wno-register)
+  # -Werror view warning as error
+  add_compile_options(-Wall -Wno-register -Werror)
 endif()
 
 # options about libraries and includes
