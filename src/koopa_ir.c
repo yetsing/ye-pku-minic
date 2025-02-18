@@ -14,6 +14,8 @@ FILE *fp = NULL;
 int temp_sign_index = 0;
 // if 计数，用来生成唯一的标签
 int if_index = 0;
+// while 计数，用来生成唯一的标签
+int while_index = 0;
 // 逻辑运算（ && || ）计数，用来生成唯一的标签
 int logic_index = 0;
 bool output_ret_inst = false;
@@ -310,6 +312,13 @@ void optimize_stmt(AstStmt *stmt) {
     if (if_stmt->else_) {
       optimize_stmt(if_stmt->else_);
     }
+    break;
+  }
+  case AST_WHILE_STMT: {
+    AstWhileStmt *while_stmt = (AstWhileStmt *)stmt;
+    while_stmt->condition = optimize_exp(while_stmt->condition);
+    optimize_stmt(while_stmt->body);
+    break;
   }
 
   default:
@@ -425,6 +434,7 @@ static void codegen_binary_exp(AstBinaryExp *exp) {
     */
     logic_index++;
     int current_logic_index = logic_index;
+    // 引入中间变量 result
     // int result = 0
     outputf("  %%result_%d = alloc i32\n", current_logic_index);
     outputf("  store 0, %%result_%d\n", current_logic_index);
@@ -444,7 +454,7 @@ static void codegen_binary_exp(AstBinaryExp *exp) {
     outputf("  jump %%and_end_%d\n", current_logic_index);
     temp_sign_index++;
     outputf("%%and_end_%d:\n", current_logic_index);
-    // 把结果放到临时值
+    // 按表达式的约定，把结果放到临时值
     outputf("  %%%d = load %%result_%d\n", temp_sign_index,
             current_logic_index);
     temp_sign_index++;
@@ -462,6 +472,7 @@ static void codegen_binary_exp(AstBinaryExp *exp) {
     */
     logic_index++;
     int current_logic_index = logic_index;
+    // 引入中间变量 result
     // int result = 1
     outputf("  %%result_%d = alloc i32\n", current_logic_index);
     outputf("  store 1, %%result_%d\n", current_logic_index);
@@ -481,7 +492,7 @@ static void codegen_binary_exp(AstBinaryExp *exp) {
     outputf("  jump %%or_end_%d\n", current_logic_index);
     temp_sign_index++;
     outputf("%%or_end_%d:\n", current_logic_index);
-    // 把结果放到临时值
+    // 按表达式的约定，把结果放到临时值
     outputf("  %%%d = load %%result_%d\n", temp_sign_index,
             current_logic_index);
     temp_sign_index++;
@@ -693,8 +704,27 @@ static void codegen_if_stmt(AstIfStmt *stmt) {
   outputf("%%if_end_%d:\n", current_if_index);
 }
 
+static void codegen_while_stmt(AstWhileStmt *stmt) {
+  while_index++;
+  int current_index = while_index;
+  outputf("  jump %%while_entry_%d\n", current_index);
+  outputf("%%while_entry_%d:\n", current_index);
+  codegen_exp(stmt->condition);
+  outputf("  br %s, %%while_body_%d, %%while_end_%d\n",
+          exp_sign(stmt->condition), current_index, current_index);
+  outputf("%%while_body_%d:\n", current_index);
+  codegen_stmt(stmt->body);
+  if (!output_ret_inst) {
+    outputf("  jump %%while_entry_%d\n", current_index);
+  }
+  outputf("%%while_end_%d:\n", current_index);
+}
+
 static void codegen_stmt(AstStmt *stmt) {
   switch (stmt->type) {
+  case AST_WHILE_STMT:
+    codegen_while_stmt((AstWhileStmt *)stmt);
+    break;
   case AST_IF_STMT:
     codegen_if_stmt((AstIfStmt *)stmt);
     break;

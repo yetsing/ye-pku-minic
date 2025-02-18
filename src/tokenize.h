@@ -6,6 +6,7 @@ typedef enum {
   TOKEN_COMMENT,
   TOKEN_INTEGER,
   TOKEN_IDENTIFIER,
+  TOKEN_KEYWORD,
   TOKEN_PLUS,          // +
   TOKEN_MINUS,         // -
   TOKEN_ASTERISK,      // *

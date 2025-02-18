@@ -40,6 +40,8 @@ const char *ast_type_to_string(AstType type) {
     return "empty_stmt";
   case AST_IF_STMT:
     return "if_stmt";
+  case AST_WHILE_STMT:
+    return "while_stmt";
   }
   fatalf("Invalid AstType: %d\n", type);
   return "";
@@ -139,6 +141,25 @@ AstBinaryExp *new_ast_binary_exp() {
   node->lhs = NULL;
   node->rhs = NULL;
   return node;
+}
+
+void ast_while_stmt_dump(AstWhileStmt *node, int indent) {
+  printf("WhileStmt: {\n");
+  printf("%*s  condition: ", indent, " ");
+  node->condition->dump((AstBase *)node->condition, indent + 2);
+  printf(",\n");
+  printf("%*s  body: ", indent, " ");
+  node->body->dump((AstBase *)node->body, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstWhileStmt *new_ast_while_stmt() {
+  AstWhileStmt *node = calloc(1, sizeof(AstWhileStmt));
+  node->base.type = AST_WHILE_STMT;
+  node->base.dump = (DumpFunc)ast_while_stmt_dump;
+  node->condition = NULL;
+  node->body = NULL;
 }
 
 void ast_if_stmt_dump(AstIfStmt *node, int indent) {

@@ -1,11 +1,14 @@
 #include "tokenize.h"
 
 #include <stdbool.h>
+#include <string.h>
 
 #include "utils.h"
 
 const char *token_type_to_string(TokenType type) {
   switch (type) {
+  case TOKEN_KEYWORD:
+    return "KEYWORD";
   case TOKEN_IDENTIFIER:
     return "IDENTIFIER";
   case TOKEN_INTEGER:
@@ -67,11 +70,24 @@ typedef struct Tokenizer {
 } Tokenizer;
 
 static Tokenizer tokenizer;
+static char *keywords[] = {
+    "const", "int", "if", "else", "return",
+};
 
 void init_tokenizer(const char *input) {
   tokenizer.start = input;
   tokenizer.current = input;
   tokenizer.line = 1;
+}
+
+static bool is_keyword(const char *s, int length) {
+  for (int i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
+    if ((length == strlen(keywords[i])) &&
+        strncmp(s, keywords[i], length) == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 static bool is_digit(char c) { return c >= '0' && c <= '9'; }
@@ -124,8 +140,12 @@ static void skip_whitespace(void) {
 static Token identifier(void) {
   while (is_identifier(*tokenizer.current))
     advance();
-  return (Token){TOKEN_IDENTIFIER, tokenizer.start,
+  Token token = {TOKEN_IDENTIFIER, tokenizer.start,
                  tokenizer.current - tokenizer.start, tokenizer.line};
+  if (is_keyword(token.start, token.length)) {
+    token.type = TOKEN_KEYWORD;
+  }
+  return token;
 }
 
 /*

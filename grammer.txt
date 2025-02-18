@@ -18,6 +18,9 @@ Stmt          ::= LVal "=" Exp ";"
                 | [Exp] ";"
                 | Block
                 | "if" "(" Exp ")" Stmt ["else" Stmt]
+                | "while" "(" Exp ")" Stmt
+                | "break" ";"
+                | "continue" ";"
                 | "return" [Exp] ";";
 
 Exp           ::= LOrExp;

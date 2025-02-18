@@ -40,9 +40,10 @@ static void consume(TokenType type) {
   if (parser.current.type == type) {
     advance();
   } else {
-    fatalf("Syntax error: expected %s, got %s at line %d\n",
+    fatalf("Syntax error: expected %s, got %s(%.*s) at line %d\n",
            token_type_to_string(type),
-           token_type_to_string(parser.current.type), parser.current.line);
+           token_type_to_string(parser.current.type), parser.current.length,
+           parser.current.start, parser.current.line);
   }
 }
 
@@ -377,7 +378,24 @@ static AstIfStmt *parse_if_stmt(void) {
   return stmt;
 }
 
-// Stmt          ::= ReturnStmt | AssignStmt | Block | ExpStmt | ";";
+// WhileStmt     ::= "while" "(" Exp ")" Stmt;
+static AstWhileStmt *parse_while_stmt(void) {
+  AstWhileStmt *stmt = new_ast_while_stmt();
+  match("while");
+  consume(TOKEN_LPAREN);
+  stmt->condition = parse_exp();
+  consume(TOKEN_RPAREN);
+  stmt->body = parse_stmt();
+  return stmt;
+}
+
+// Stmt          ::= ReturnStmt
+//                 | AssignStmt
+//                 | Block
+//                 | ExpStmt
+//                 | ";"
+//                 | IfStmt
+//                 | WhileStmt;
 static AstStmt *parse_stmt(void) {
   if (current_eq("return")) {
     return parse_return_stmt();
@@ -390,6 +408,8 @@ static AstStmt *parse_stmt(void) {
     return (AstStmt *)new_ast_empty_stmt();
   } else if (current_eq("if")) {
     return (AstStmt *)parse_if_stmt();
+  } else if (current_eq("while")) {
+    return (AstStmt *)parse_while_stmt();
   } else {
     return (AstStmt *)parse_exp_stmt();
   }

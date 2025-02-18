@@ -445,6 +445,9 @@ def run_tests(mode: TestMode, compiler: CompilerInfo, cases: List[TestCase]):
       if mode == TestMode.PERF:
         result.show_perf()
       passed += 1
+    else:
+      # 测试失败直接结束
+      break
   # print test result
   total = len(cases)
   status = TestStatus.PASSED if passed == total else TestStatus.WRONG_ANSWER
