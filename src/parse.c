@@ -22,6 +22,7 @@ static AstExp *parse_primary_exp(void);
 static AstNumber *parse_number(void);
 static AstIdentifier *parse_identifier(void);
 static AstExp *parse_unary_exp(void);
+static AstExp *parse_call_exp(void);
 static AstExp *parse_add_exp(void);
 static AstExp *parse_mul_exp(void);
 static AstExp *parse_lor_exp(void);
@@ -152,7 +153,7 @@ static AstNumber *parse_number(void) {
   return number;
 }
 
-// PrimaryExp  ::= "(" Exp ")" | Number;
+// PrimaryExp  ::= "(" Exp ")" | IDENT | Number;
 static AstExp *parse_primary_exp(void) {
   switch (parser.current.type) {
   case TOKEN_IDENTIFIER:
@@ -171,7 +172,22 @@ static AstExp *parse_primary_exp(void) {
   }
 }
 
-// UnaryExp   ::= PrimaryExp | ("+" | "-" | "!") UnaryExp;
+// CallExp     ::= IDENT "(" [Exp {"," Exp}] ")";
+static AstExp *parse_call_exp(void) {
+  AstFuncCall *func_call = new_ast_func_call();
+  func_call->ident = parse_identifier();
+  consume(TOKEN_LPAREN);
+  if (!try_consume(TOKEN_RPAREN)) {
+    do {
+      AstExp *exp = parse_exp();
+      ast_func_call_add(func_call, exp);
+    } while (try_consume(TOKEN_COMMA));
+    consume(TOKEN_RPAREN);
+  }
+  return (AstExp *)func_call;
+}
+
+// UnaryExp   ::= PrimaryExp | CallExp | ("+" | "-" | "!") UnaryExp;
 static AstExp *parse_unary_exp(void) {
   if (parser.current.type == TOKEN_PLUS || parser.current.type == TOKEN_MINUS ||
       parser.current.type == TOKEN_BANG) {
@@ -180,7 +196,10 @@ static AstExp *parse_unary_exp(void) {
     advance();
     unary_exp->operand = parse_unary_exp();
     return (AstExp *)unary_exp;
+  } else if (parser.current.type == TOKEN_IDENTIFIER && peek_is(TOKEN_LPAREN)) {
+    return parse_call_exp();
   }
+
   return parse_primary_exp();
 }
 
@@ -299,8 +318,12 @@ static AstStmt *parse_assign_stmt(void) {
 
 // FuncType  ::= "int";
 static BType parse_func_type(void) {
-  match("int");
-  return BType_INT;
+  if (try_match("void")) {
+    return BType_VOID;
+  } else {
+    match("int");
+    return BType_INT;
+  }
 }
 
 // IDENT;
@@ -476,21 +499,40 @@ static AstBlock *parse_block(void) {
   return block;
 }
 
-// FuncDef   ::= FuncType IDENT "(" ")" Block;
+// FuncDef   ::= FuncType IDENT "(" [FuncFParams] ")" Block;
+// FuncFParams ::= FuncFParam ("," FuncFParam)*;
+// FuncFParam  ::= "int" IDENT;
 static AstFuncDef *parse_func_def(void) {
   AstFuncDef *func_def = new_ast_func_def();
   func_def->func_type = parse_func_type();
   func_def->ident = parse_identifier();
   consume(TOKEN_LPAREN);
-  consume(TOKEN_RPAREN);
+  if (!try_consume(TOKEN_RPAREN)) {
+    FuncParam head;
+    head.next = NULL;
+    FuncParam *tail = &head;
+    do {
+      FuncParam *param = calloc(1, sizeof(FuncParam));
+      param->type = parse_func_type();
+      param->ident = parse_identifier();
+      tail->next = param;
+      tail = param;
+      func_def->param_count++;
+    } while (try_consume(TOKEN_COMMA));
+    func_def->params = head.next;
+    consume(TOKEN_RPAREN);
+  }
   func_def->block = parse_block();
   return func_def;
 }
 
-// CompUnit  ::= FuncDef;
+// CompUnit  ::= (FuncDef)+;
 static AstCompUnit *parse_comp_unit(void) {
   AstCompUnit *comp_unit = new_ast_comp_unit();
-  comp_unit->func_def = parse_func_def();
+  while (!current_is(TOKEN_EOF)) {
+    AstFuncDef *func_def = parse_func_def();
+    ast_comp_unit_add(comp_unit, (AstBase *)func_def);
+  }
   return comp_unit;
 }
 

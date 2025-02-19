@@ -12,6 +12,8 @@ const char *ast_type_to_string(AstType type) {
     return "unary_exp";
   case AST_BINARY_EXP:
     return "binary_exp";
+  case AST_FUNC_CALL:
+    return "func_call";
   case AST_STMT:
     return "stmt";
   case AST_EXP_STMT:
@@ -57,6 +59,8 @@ const char *btype_to_string(BType type) {
     return "unknown";
   case BType_INT:
     return "int";
+  case BType_VOID:
+    return "void";
   }
   fatalf("Invalid BType: %d\n", type);
   return "";
@@ -107,6 +111,18 @@ AstNumber *new_ast_number() {
   return node;
 }
 
+void ast_identifier_dump(AstIdentifier *node, int indent) {
+  printf("%s", node->name);
+}
+
+AstIdentifier *new_ast_identifier() {
+  AstIdentifier *node = calloc(1, sizeof(AstIdentifier));
+  node->base.type = AST_IDENTIFIER;
+  node->base.dump = (DumpFunc)ast_identifier_dump;
+  node->name = NULL;
+  return node;
+}
+
 void ast_unary_exp_dump(AstUnaryExp *node, int indent) {
   printf("UnaryExp: {\n");
   printf("%*s  op: %c,\n", indent, " ", node->op);
@@ -145,6 +161,37 @@ AstBinaryExp *new_ast_binary_exp() {
   node->lhs = NULL;
   node->rhs = NULL;
   return node;
+}
+
+void ast_call_exp_dump(AstFuncCall *node, int indent) {
+  printf("CallExp: {\n");
+  printf("%*s  ident: %s,\n", indent, " ", node->ident->name);
+  for (int i = 0; i < node->count; i++) {
+    printf("%*s  arg: ", indent, " ");
+    node->args[i]->dump((AstBase *)node->args[i], indent + 2);
+    printf(",\n");
+  }
+  printf("%*s}", indent, " ");
+}
+
+AstFuncCall *new_ast_func_call() {
+  AstFuncCall *node = calloc(1, sizeof(AstFuncCall));
+  node->base.type = AST_FUNC_CALL;
+  node->base.dump = (DumpFunc)ast_call_exp_dump;
+  node->ident = NULL;
+  node->count = 0;
+  node->capacity = 10;
+  node->args = calloc(node->capacity, sizeof(AstExp *));
+  return node;
+}
+
+void ast_func_call_add(AstFuncCall *func_call, AstExp *arg) {
+  if (func_call->count >= func_call->capacity) {
+    func_call->capacity *= 2;
+    func_call->args =
+        realloc(func_call->args, func_call->capacity * sizeof(AstExp *));
+  }
+  func_call->args[func_call->count++] = arg;
 }
 
 void ast_break_stmt_dump(AstBreakStmt *node, int indent) {
@@ -363,18 +410,6 @@ AstVarDecl *new_ast_var_decl() {
   return node;
 }
 
-void ast_identifier_dump(AstIdentifier *node, int indent) {
-  printf("%s", node->name);
-}
-
-AstIdentifier *new_ast_identifier() {
-  AstIdentifier *node = calloc(1, sizeof(AstIdentifier));
-  node->base.type = AST_IDENTIFIER;
-  node->base.dump = (DumpFunc)ast_identifier_dump;
-  node->name = NULL;
-  return node;
-}
-
 void ast_block_dump(AstBlock *node, int indent) {
   printf("Block: {\n");
   AstStmt *stmt = node->stmt;
@@ -402,6 +437,16 @@ void ast_func_def_dump(AstFuncDef *node, int indent) {
   printf("%*s  ident: ", indent, " ");
   node->ident->base.dump((AstBase *)node->ident, indent + 2);
   printf(",\n");
+  printf("%*s  params: ", indent, " ");
+  FuncParam *param = node->params;
+  while (param) {
+    printf("%s %s", btype_to_string(param->type), param->ident->name);
+    param = param->next;
+    if (param) {
+      printf(", ");
+    }
+  }
+  printf(",\n");
   printf("%*s  block: ", indent, " ");
   node->block->base.dump((AstBase *)node->block, indent + 2);
   printf(",\n");
@@ -415,21 +460,35 @@ AstFuncDef *new_ast_func_def() {
   node->func_type = BType_UNKNOWN;
   node->ident = NULL;
   node->block = NULL;
+  node->params = NULL;
+  node->param_count = 0;
   return node;
 }
 
 void ast_comp_unit_dump(AstCompUnit *node, int indent) {
   printf("%*sCompUnit: {\n", indent, indent > 0 ? " " : "");
-  printf("%*s  func_def: ", indent, indent > 0 ? " " : "");
-  node->func_def->base.dump((AstBase *)node->func_def, indent + 2);
-  printf(",\n");
-  printf("%*s}\n", indent, indent > 0 ? " " : "");
+  for (int i = 0; i < node->count; i++) {
+    printf("%*s  ", indent, " ");
+    node->func_defs[i]->dump(node->func_defs[i], indent + 2);
+    printf(",\n");
+  }
+  printf("%*s}", indent, " ");
 }
 
 AstCompUnit *new_ast_comp_unit() {
   AstCompUnit *node = calloc(1, sizeof(AstCompUnit));
   node->base.type = AST_COMP_UNIT;
   node->base.dump = (DumpFunc)ast_comp_unit_dump;
-  node->func_def = NULL;
+  node->count = 0;
+  node->capacity = 10;
+  node->func_defs = calloc(node->capacity, sizeof(AstBase *));
   return node;
+}
+void ast_comp_unit_add(AstCompUnit *comp_unit, AstBase *node) {
+  if (comp_unit->count >= comp_unit->capacity) {
+    comp_unit->capacity *= 2;
+    comp_unit->func_defs =
+        realloc(comp_unit->func_defs, comp_unit->capacity * sizeof(AstBase *));
+  }
+  comp_unit->func_defs[comp_unit->count++] = node;
 }

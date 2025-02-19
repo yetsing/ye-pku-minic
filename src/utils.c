@@ -13,6 +13,13 @@ void fatalf(const char *fmt, ...) {
   assert(0);
 }
 
+void internal_warnf(const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  vfprintf(stderr, fmt, args);
+  va_end(args);
+}
+
 void int_stack_init(IntStack *stack) {
   stack->size = 0;
   stack->capacity = 10;

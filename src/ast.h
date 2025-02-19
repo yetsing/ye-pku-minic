@@ -1,10 +1,13 @@
 #ifndef SRC_AST_H_
 #define SRC_AST_H_
 
+#include <stdbool.h>
+
 typedef enum {
   AST_NUMBER,
   AST_UNARY_EXP,
   AST_BINARY_EXP,
+  AST_FUNC_CALL,
   AST_IDENTIFIER,
   AST_STMT,
   AST_EXP_STMT,
@@ -28,6 +31,7 @@ const char *ast_type_to_string(AstType type);
 typedef enum {
   BType_UNKNOWN,
   BType_INT,
+  BType_VOID,
 } BType;
 const char *btype_to_string(BType type);
 
@@ -68,6 +72,12 @@ typedef struct {
 } AstNumber;
 AstNumber *new_ast_number();
 
+typedef struct {
+  AstExp base;
+  const char *name;
+} AstIdentifier;
+AstIdentifier *new_ast_identifier();
+
 typedef struct AstUnaryExp {
   AstExp base;
   char op;
@@ -82,6 +92,16 @@ typedef struct AstBinaryExp {
   AstExp *rhs;
 } AstBinaryExp;
 AstBinaryExp *new_ast_binary_exp();
+
+typedef struct {
+  AstBase base;
+  AstIdentifier *ident;
+  AstExp **args;
+  int count;
+  int capacity;
+} AstFuncCall;
+AstFuncCall *new_ast_func_call();
+void ast_func_call_add(AstFuncCall *func_call, AstExp *arg);
 
 typedef struct AstStmt AstStmt;
 typedef struct AstStmt {
@@ -172,29 +192,35 @@ typedef struct {
 AstVarDecl *new_ast_var_decl();
 
 typedef struct {
-  AstExp base;
-  const char *name;
-} AstIdentifier;
-AstIdentifier *new_ast_identifier();
-
-typedef struct {
   AstStmt base;
   AstStmt *stmt;
 } AstBlock;
 AstBlock *new_ast_block();
+
+typedef struct FuncParam FuncParam;
+typedef struct FuncParam {
+  BType type;
+  AstIdentifier *ident;
+  FuncParam *next;
+} FuncParam;
 
 typedef struct {
   AstBase base;
   BType func_type;
   AstIdentifier *ident;
   AstBlock *block;
+  FuncParam *params;
+  int param_count;
 } AstFuncDef;
 AstFuncDef *new_ast_func_def();
 
 typedef struct {
   AstBase base;
-  AstFuncDef *func_def;
+  AstBase **func_defs;
+  int count;
+  int capacity;
 } AstCompUnit;
 AstCompUnit *new_ast_comp_unit();
+void ast_comp_unit_add(AstCompUnit *comp_unit, AstBase *node);
 
 #endif // SRC_AST_H_

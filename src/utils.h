@@ -4,6 +4,8 @@
 #include <stdbool.h>
 
 void fatalf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+#define warnf(fmt, ...) internal_warnf("Warning: " fmt, ##__VA_ARGS__)
+void internal_warnf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /**
  * @struct IntStack

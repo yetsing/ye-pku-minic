@@ -23,6 +23,8 @@ IntStack while_stack;
 // 逻辑运算（ && || ）计数，用来生成唯一的标签
 int logic_index = 0;
 bool output_ret_inst = false;
+// 当前正在处理的函数
+AstFuncDef *current_func_def = NULL;
 
 static bool starts_with(const char *str, const char *prefix) {
   // 移除前面的空格
@@ -41,6 +43,11 @@ static void outputf(const char *fmt, ...) {
   va_end(args);
 }
 
+typedef enum {
+  SymbolType_int,
+  SymbolType_func,
+} SymbolType;
+
 typedef struct Symbol Symbol;
 typedef struct Symbol {
   const char *name;
@@ -49,9 +56,13 @@ typedef struct Symbol {
   int level;    // 符号的作用域
   int index;    // 符号的计数，用来生成唯一的符号名
   Symbol *next; // 指向下一个符号
+
+  SymbolType type;
+  AstFuncDef *func_def;
 } Symbol;
 
-static Symbol symbol_table_head = {NULL, false, 0, 0, 0, NULL};
+static Symbol symbol_table_head = {NULL, false,          0,   0, 0,
+                                   NULL, SymbolType_int, NULL};
 
 static void reset_symbol_table() {
   Symbol *symbol = symbol_table_head.next;
@@ -79,7 +90,7 @@ static Symbol *find_symbol(const char *name) {
   return NULL;
 }
 
-static Symbol *new_symbol(const char *name) {
+static Symbol *new_symbol(const char *name, SymbolType type) {
   Symbol *found = find_symbol(name);
   if (found != NULL && found->level == symbol_table_head.level) {
     fprintf(stderr, "符号 %s 已经存在\n", name);
@@ -92,6 +103,7 @@ static Symbol *new_symbol(const char *name) {
   symbol->level = symbol_table_head.level;
   symbol->next = symbol_table_head.next;
   symbol->index = symbol_table_head.index++;
+  symbol->type = type;
   symbol_table_head.next = symbol;
   return symbol;
 }
@@ -278,7 +290,7 @@ void optimize_const_decl(AstConstDecl *decl) {
   while (def) {
     if (is_const_exp(def->exp)) {
       int value = eval_const_exp(def->exp);
-      Symbol *symbol = new_symbol(def->name);
+      Symbol *symbol = new_symbol(def->name, SymbolType_int);
       symbol->is_const_value = true;
       symbol->value = value;
     }
@@ -381,8 +393,10 @@ void optimize_block(AstBlock *block) {
 //  - 数字计算，例如 1 + 2 -> 3
 //  - 常量替换，例如 const a = 1; const b = a + 2; -> const a = 1; const b = 3;
 void optimize_comp_unit(AstCompUnit *comp_unit) {
-  AstFuncDef *func_def = comp_unit->func_def;
-  optimize_block(func_def->block);
+  for (int i = 0; i < comp_unit->count; i++) {
+    AstFuncDef *func_def = (AstFuncDef *)comp_unit->func_defs[i];
+    optimize_block(func_def->block);
+  }
 
   // 重置符号表
   reset_symbol_table();
@@ -601,6 +615,41 @@ static void codegen_binary_exp(AstBinaryExp *exp) {
   free(rhs);
 }
 
+static void codegen_func_call(AstFuncCall *func_call) {
+  Symbol *symbol = find_symbol(func_call->ident->name);
+  if (symbol == NULL) {
+    fatalf("调用未定义的函数 %s\n", func_call->ident->name);
+  }
+  if (symbol->type != SymbolType_func) {
+    fatalf("调用非函数符号 %s\n", func_call->ident->name);
+  }
+  if (symbol->func_def->param_count != func_call->count) {
+    fatalf("调用函数 %s 参数个数不匹配\n", func_call->ident->name);
+  }
+
+  AstExp **args = func_call->args;
+  char **signs = malloc(sizeof(char *) * func_call->count);
+  for (int i = 0; i < func_call->count; i++) {
+    codegen_exp(args[i]);
+    signs[i] = exp_sign(args[i]);
+  }
+  if (symbol->func_def->func_type == BType_VOID) {
+    outputf("  call @%s(", symbol->name);
+  } else {
+    outputf("  %%%d = call @%s(", temp_sign_index, symbol->name);
+    temp_sign_index++;
+  }
+  for (int i = 0; i < func_call->count; i++) {
+    outputf("%s%s", signs[i], (i == func_call->count - 1) ? "" : ", ");
+  }
+  outputf(")\n");
+
+  for (int i = 0; i < func_call->count; i++) {
+    free(signs[i]);
+  }
+  free(signs);
+}
+
 static void codegen_exp(AstExp *exp) {
   switch (exp->type) {
   case AST_UNARY_EXP: {
@@ -637,6 +686,9 @@ static void codegen_exp(AstExp *exp) {
   case AST_IDENTIFIER:
     codegen_identifier((AstIdentifier *)exp);
     break;
+  case AST_FUNC_CALL:
+    codegen_func_call((AstFuncCall *)exp);
+    break;
   default:
     fprintf(stderr, "未知的表达式类型 %s\n", ast_type_to_string(exp->type));
     exit(1);
@@ -644,8 +696,18 @@ static void codegen_exp(AstExp *exp) {
 }
 
 static void codegen_return_stmt(AstReturnStmt *stmt) {
-  codegen_exp(stmt->exp);
-  outputf("  ret %s\n", exp_sign(stmt->exp));
+  if (stmt->exp) {
+    if (current_func_def->func_type == BType_VOID) {
+      fatalf("void 函数只能出现不带返回值的 return 语句\n");
+    }
+    codegen_exp(stmt->exp);
+    outputf("  ret %s\n", exp_sign(stmt->exp));
+  } else {
+    if (current_func_def->func_type != BType_VOID) {
+      warnf("非 void 函数没有 return 返回值\n");
+    }
+    outputf("  ret\n");
+  }
 }
 
 static void codegen_assign_stmt(AstAssignStmt *stmt) {
@@ -666,7 +728,7 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
 static void codegen_var_decl(AstVarDecl *decl) {
   AstVarDef *def = decl->def;
   while (def) {
-    Symbol *symbol = new_symbol(def->name);
+    Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
     outputf("  %s = alloc i32\n", name);
     if (def->exp) {
@@ -805,18 +867,93 @@ static void codegen_block(AstBlock *block) {
 }
 
 static void codegen_func_def(AstFuncDef *func_def) {
-  outputf("fun @%s(): i32 {\n", func_def->ident->name);
+  current_func_def = func_def;
+  outputf("fun @%s(", func_def->ident->name);
+  if (func_def->param_count > 0) {
+    FuncParam *param = func_def->params;
+    while (param) {
+      outputf("@%s: i32", param->ident->name);
+      param = param->next;
+      if (param) {
+        outputf(", ");
+      }
+    }
+  }
+  outputf(") ");
+  if (func_def->func_type != BType_VOID) {
+    outputf(": i32 ");
+  }
+  outputf("{\n");
+
+  // if (func_def->func_type == BType_VOID) {
+  //   if (func_def->param_count == 0) {
+  //     outputf("fun @%s() {\n", func_def->ident->name);
+  //   } else {
+  //     outputf("fun @%s(", func_def->ident->name);
+  //     FuncParam *param = func_def->params;
+  //     while (param) {
+  //       outputf("@%s: i32", param->ident->name);
+  //       param = param->next;
+  //       if (param) {
+  //         outputf(", ");
+  //       }
+  //     }
+  //     outputf(") {\n");
+  //   }
+  // } else {
+  //   if (func_def->param_count == 0) {
+  //     outputf("fun @%s(): i32 {\n", func_def->ident->name);
+  //   } else {
+  //     outputf("fun @%s(", func_def->ident->name);
+  //     FuncParam *param = func_def->params;
+  //     while (param) {
+  //       outputf("@%s: i32", param->ident->name);
+  //       param = param->next;
+  //       if (param) {
+  //         outputf(", ");
+  //       }
+  //     }
+  //     outputf("): i32 {\n");
+  //   }
+  // }
   outputf("%%entry:\n");
+
+  enter_scope();
+  FuncParam *param = func_def->params;
+  while (param) {
+    Symbol *symbol = new_symbol(param->ident->name, SymbolType_int);
+    const char *name = symbol_unique_name(symbol);
+    outputf("  %s = alloc i32\n", name);
+    outputf("  store @%s, %s\n", param->ident->name, name);
+    free((void *)name);
+    param = param->next;
+  }
+
   codegen_block(func_def->block);
+  if (!output_ret_inst) {
+    outputf("  ret\n");
+  }
   outputf("}\n");
+  leave_scope();
 }
 
 static void codegen_comp_unit(AstCompUnit *comp_unit) {
-  if (strcmp(comp_unit->func_def->ident->name, "main") != 0) {
-    fprintf(stderr, "入口函数必须是 main\n");
-    exit(1);
+  bool has_main = false;
+  for (int i = 0; i < comp_unit->count; i++) {
+    AstFuncDef *func_def = (AstFuncDef *)comp_unit->func_defs[i];
+    Symbol *symbol = new_symbol(func_def->ident->name, SymbolType_func);
+    symbol->func_def = func_def;
+    codegen_func_def(func_def);
+    if (strcmp(func_def->ident->name, "main") == 0 &&
+        func_def->func_type == BType_INT) {
+      has_main = true;
+    }
   }
-  codegen_func_def(comp_unit->func_def);
+  // 在该 CompUnit 中, 必须存在且仅存在一个标识为 main, 无参数, 返回类型为 int
+  // 的 FuncDef (函数定义). main 函数是程序的入口点.
+  if (!has_main) {
+    fatalf("入口函数 main 不存在\n");
+  }
 }
 
 // #endregion
