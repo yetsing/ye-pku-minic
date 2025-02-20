@@ -10,19 +10,36 @@
 #include "koopa.h"
 #include "utils.h"
 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 static FILE *fp;
-static int stack_index = -1; // 给临时变量计数用的
+
+__attribute__((format(printf, 1, 2))) static void outputf(const char *fmt, ...);
+static void outputf(const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  // vprintf(fmt, args);
+  vfprintf(fp, fmt, args);
+  va_end(args);
+}
+
+static int temp_index = -1; // 给临时变量计数用的
+// 函数返回时，需要恢复 sp ，所以需要记录栈的大小
+// 即生成 ret 指令时，需要将 sp 加上这个大小，恢复栈空间
 static size_t stack_size = 0;
+// 是否调用了其他函数，如果调用了，需要保存 ra
+// 寄存器； ret 指令时，需要恢复 ra 寄存器
+static bool has_call = false;
 
 typedef struct Variable Variable;
 typedef struct Variable {
   const char *name;
   int offset;
   Variable *next;
-  int count; // 临时变量计数
+  int count; // 计数
 } Variable;
 
-static Variable locals = {NULL, 0, NULL, 0};
+static Variable locals = {NULL, 0, NULL, 0}; // 局部变量
 
 static int new_variable(const char *name) {
   assert(name != NULL);
@@ -33,6 +50,15 @@ static int new_variable(const char *name) {
   locals.next = var;
   locals.count++;
   return var->offset;
+}
+
+// 给所有局部变量的偏移量增加 offset
+static void locals_add_offset(int offset) {
+  Variable *var = locals.next;
+  while (var != NULL) {
+    var->offset += offset;
+    var = var->next;
+  }
 }
 
 static int get_offset(const char *name) {
@@ -47,20 +73,29 @@ static int get_offset(const char *name) {
   return -1;
 }
 
-// 临时变量的偏移量，对应 IR 中的 %0, %1, %2, ...
-static int get_temp_offset(void) {
-  int n = (stack_index + locals.count) * 4;
-  // assert(n >= 0 && n < stack_size);
-  return n;
+static int last_offset(void) {
+  // 局部变量是逆序存储的，所以第一个就是最后一个
+  Variable *var = locals.next;
+  return var == NULL ? 0 : var->offset;
 }
 
-__attribute__((format(printf, 1, 2))) static void outputf(const char *fmt, ...);
-static void outputf(const char *fmt, ...) {
-  va_list args;
-  va_start(args, fmt);
-  // vprintf(fmt, args);
-  vfprintf(fp, fmt, args);
-  va_end(args);
+static void locals_reset(void) {
+  Variable *var = locals.next;
+  while (var != NULL) {
+    Variable *next = var->next;
+    free(var);
+    var = next;
+  }
+  locals.next = NULL;
+  locals.count = 0;
+}
+
+// 临时变量的偏移量，对应 IR 中的 %0, %1, %2, ...
+static int get_temp_offset(void) {
+  int last = last_offset();
+  int n = (temp_index) * 4 + last;
+  // assert(n >= 0 && n < stack_size);
+  return n;
 }
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret);
@@ -73,17 +108,25 @@ static void visit_koopa_raw_program(const koopa_raw_program_t program);
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary);
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch);
 static void visit_koopa_raw_jump(const koopa_raw_jump_t jump);
+static void visit_koopa_raw_call(const koopa_raw_call_t call);
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("\n  # === return ===\n");
-  if (ret.value->kind.tag == KOOPA_RVT_INTEGER) {
-    // 如果返回值是常量，直接使用立即数
-    outputf("  li a0, %d\n", ret.value->kind.data.integer.value);
-  } else {
-    visit_koopa_raw_value(ret.value);
-    // 从栈中取出返回值
-    outputf("  lw a0, %d(sp)\n", get_temp_offset());
+  if (ret.value) {
+    if (ret.value->kind.tag == KOOPA_RVT_INTEGER) {
+      // 如果返回值是常量，直接使用立即数
+      outputf("  li a0, %d\n", ret.value->kind.data.integer.value);
+    } else {
+      visit_koopa_raw_value(ret.value);
+      // 从栈中取出返回值
+      outputf("  lw a0, %d(sp)\n", get_temp_offset());
+    }
   }
+  if (has_call) {
+    // 如果调用了其他函数，需要恢复 ra 寄存器
+    outputf("  lw ra, %zu(sp)\n", stack_size - 4);
+  }
+
   // 函数返回，恢复栈空间 epilogue
   if (stack_size < 2048) {
     outputf("  addi sp, sp, %zu\n", stack_size);
@@ -195,23 +238,37 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     printf("visit_koopa_raw_binary unknown op: %d\n", binary.op);
     assert(false);
   }
-  stack_index++; // 存在返回值，所以栈指针需要移动
+  temp_index++; // 存在返回值，所以栈指针需要移动
   // 将结果存储到栈上
   outputf("  sw %s, %d(sp)\n", result_register, get_temp_offset());
   outputf("  # === binary %d end ===\n", binary.op);
 }
 
 static void visit_koopa_raw_load(const koopa_raw_load_t load) {
-  stack_index++; // 存在返回值，所以栈指针需要移动
+  temp_index++; // 存在返回值，所以栈指针需要移动
   outputf("  lw t0, %d(sp)\n", get_offset(load.src->name));
   outputf("  sw t0, %d(sp)\n", get_temp_offset());
 }
 
 static void visit_koopa_raw_store(const koopa_raw_store_t store) {
-  visit_koopa_raw_value(store.value);
-  // 结果已经在 t0 中了，直接存储到栈上
-  // outputf("  lw t0, %d(sp)\n", get_temp_offset());
-  outputf("  sw t0, %d(sp)\n", get_offset(store.dest->name));
+  if (store.value->kind.tag == KOOPA_RVT_FUNC_ARG_REF) {
+    int index = store.value->kind.data.func_arg_ref.index;
+    if (index < 8) {
+      // 参数在 a0 ~ a7 中
+      outputf("  sw a%d, %d(sp)\n", index, get_offset(store.dest->name));
+    } else {
+      // 参数在栈上
+      outputf("  lw t0, %d(sp)\n", (int)stack_size + (index - 8) * 4);
+      // 结果已经在 t0 中了，直接存储到栈上
+      // outputf("  lw t0, %d(sp)\n", get_temp_offset());
+      outputf("  sw t0, %d(sp)\n", get_offset(store.dest->name));
+    }
+  } else {
+    visit_koopa_raw_value(store.value);
+    // 结果已经在 t0 中了，直接存储到栈上
+    // outputf("  lw t0, %d(sp)\n", get_temp_offset());
+    outputf("  sw t0, %d(sp)\n", get_offset(store.dest->name));
+  }
 }
 
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch) {
@@ -226,6 +283,52 @@ static void visit_koopa_raw_branch(const koopa_raw_branch_t branch) {
 
 static void visit_koopa_raw_jump(const koopa_raw_jump_t jump) {
   outputf("  j %s\n", jump.target->name + 1);
+}
+
+static void visit_koopa_raw_call(const koopa_raw_call_t call) {
+  outputf("\n  # === call ===\n");
+  int *arg_offsets = (int *)malloc(call.args.len * sizeof(int));
+  memset(arg_offsets, 0, call.args.len * sizeof(int));
+  // 先对调用参数求值
+  for (int i = 0; i < 8 && i < call.args.len; i++) {
+    const koopa_raw_value_t arg = call.args.buffer[i];
+    if (arg->kind.tag == KOOPA_RVT_INTEGER) {
+      // 参数是常量，直接使用立即数
+    } else {
+      visit_koopa_raw_value(arg);
+      arg_offsets[i] = get_temp_offset();
+    }
+  }
+
+  // 再进行参数传递
+  for (int i = 0; i < 8 && i < call.args.len; i++) {
+    const koopa_raw_value_t arg = call.args.buffer[i];
+    if (arg->kind.tag == KOOPA_RVT_INTEGER) {
+      // 参数是常量，直接使用立即数
+      outputf("  li a%d, %d\n", i, arg->kind.data.integer.value);
+    } else {
+      outputf("  lw a%d, %d(sp)\n", i, arg_offsets[i]);
+    }
+  }
+  // 如果参数个数大于 8，需要额外的栈空间保存参数
+  for (int i = 8; i < call.args.len; i++) {
+    const koopa_raw_value_t arg = call.args.buffer[i];
+    if (arg->kind.tag == KOOPA_RVT_INTEGER) {
+      // 参数是常量，直接使用立即数
+      outputf("  li t0, %d\n", arg->kind.data.integer.value);
+    } else {
+      outputf("  lw t0, %d(sp)\n", arg_offsets[i]);
+    }
+    outputf("  sw t0, %d(sp)\n", (i - 8) * 4);
+  }
+
+  // 调用函数
+  outputf("  call %s\n", call.callee->name + 1); // + 1 是为了跳过函数名前的 @
+  // 保存返回值
+  temp_index++; // 存在返回值，所以栈指针需要移动
+  outputf("  sw a0, %d(sp)\n", get_temp_offset());
+  outputf("  mv t0, a0\n");
+  outputf("  # === call end ===\n");
 }
 
 static void visit_koopa_raw_value(const koopa_raw_value_t value) {
@@ -256,6 +359,9 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   case KOOPA_RVT_JUMP:
     visit_koopa_raw_jump(kind.data.jump);
     break;
+  case KOOPA_RVT_CALL:
+    visit_koopa_raw_call(kind.data.call);
+    break;
   }
   default:
     printf("visit_koopa_raw_value unknown kind: %d\n", kind.tag);
@@ -264,11 +370,15 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
 }
 
 static void visit_koopa_raw_basic_block(const koopa_raw_basic_block_t block) {
-  outputf("\n%s:\n", block->name + 1); // + 1 是为了跳过基本块名前的 %
+  if (strcmp(block->name, "%entry") != 0) {
+    outputf("\n%s:\n", block->name + 1); // + 1 是为了跳过基本块名前的 %
+  }
   visit_koopa_raw_slice(block->insts);
 }
 
 static void visit_koopa_raw_function(const koopa_raw_function_t func) {
+  temp_index = 0;
+  locals_reset();
   /**
     栈帧变量分配情况，从低到高依次为：局部变量、% 开头的临时变量，例如下面这样：
     sp + 12: %2
@@ -278,6 +388,8 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
   */
   // 计算函数需要的栈空间
   stack_size = 0;
+  has_call = false;
+  int max_call_args = 0;
   for (size_t i = 0; i < func->bbs.len; i++) {
     const koopa_raw_basic_block_t block = func->bbs.buffer[i];
     for (size_t j = 0; j < block->insts.len; j++) {
@@ -290,17 +402,35 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
         // 分配局部变量
         new_variable(value->name);
       }
+      if (value->kind.tag == KOOPA_RVT_CALL) {
+        has_call = true;
+        max_call_args = MAX(max_call_args, value->kind.data.call.args.len);
+      }
     }
+  }
+  if (has_call) {
+    // 如果函数调用了其他函数，需要额外的栈空间保存 ra 寄存器
+    stack_size += 4;
+  }
+  if (max_call_args > 8) {
+    // 如果函数调用的参数个数大于 8，需要额外的栈空间保存参数
+    stack_size += (max_call_args - 8) * 4;
+    locals_add_offset((max_call_args - 8) * 4);
   }
   printf("stack_size: %zu, local count: %d\n", stack_size, locals.count);
   // 对齐到 16 字节
   stack_size = (stack_size + 15) & ~15;
+
   outputf("%s:\n", func->name + 1); // + 1 是为了跳过函数名前的 @
   if (stack_size <= 2048) {
     outputf("  addi sp, sp, -%zu\n", stack_size);
   } else {
     outputf("  li t0, -%zu\n", stack_size);
     outputf("  add sp, sp, t0\n");
+  }
+  if (has_call) {
+    // 保存 ra 寄存器
+    outputf("  sw ra, %zu(sp)\n", stack_size - 4);
   }
   visit_koopa_raw_slice(func->bbs);
 }

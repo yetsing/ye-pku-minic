@@ -867,6 +867,7 @@ static void codegen_block(AstBlock *block) {
 }
 
 static void codegen_func_def(AstFuncDef *func_def) {
+  temp_sign_index = 0;
   current_func_def = func_def;
   outputf("fun @%s(", func_def->ident->name);
   if (func_def->param_count > 0) {
