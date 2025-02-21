@@ -48,6 +48,23 @@ typedef enum {
   SymbolType_func,
 } SymbolType;
 
+typedef struct {
+  BType return_type;
+  BType *param_types;
+  int param_count;
+} FunctionType;
+
+void update_func_type(AstFuncDef *func_def, FunctionType *func_type) {
+  func_type->return_type = func_def->func_type;
+  func_type->param_count = func_def->param_count;
+  func_type->param_types = malloc(sizeof(BType) * func_type->param_count);
+  FuncParam *param = func_def->params;
+  for (int i = 0; i < func_type->param_count; i++) {
+    func_type->param_types[i] = param->type;
+    param = param->next;
+  }
+}
+
 typedef struct Symbol Symbol;
 typedef struct Symbol {
   const char *name;
@@ -58,11 +75,10 @@ typedef struct Symbol {
   Symbol *next; // 指向下一个符号
 
   SymbolType type;
-  AstFuncDef *func_def;
+  FunctionType func_type;
 } Symbol;
 
-static Symbol symbol_table_head = {NULL, false,          0,   0, 0,
-                                   NULL, SymbolType_int, NULL};
+static Symbol symbol_table_head = {NULL, false, 0, 0, 0, NULL, SymbolType_int};
 
 static void reset_symbol_table() {
   Symbol *symbol = symbol_table_head.next;
@@ -96,7 +112,7 @@ static Symbol *new_symbol(const char *name, SymbolType type) {
     fprintf(stderr, "符号 %s 已经存在\n", name);
     exit(1);
   }
-  Symbol *symbol = malloc(sizeof(Symbol));
+  Symbol *symbol = calloc(1, sizeof(Symbol));
   symbol->name = name;
   symbol->is_const_value = false;
   symbol->value = 0;
@@ -623,7 +639,7 @@ static void codegen_func_call(AstFuncCall *func_call) {
   if (symbol->type != SymbolType_func) {
     fatalf("调用非函数符号 %s\n", func_call->ident->name);
   }
-  if (symbol->func_def->param_count != func_call->count) {
+  if (symbol->func_type.param_count != func_call->count) {
     fatalf("调用函数 %s 参数个数不匹配\n", func_call->ident->name);
   }
 
@@ -633,7 +649,7 @@ static void codegen_func_call(AstFuncCall *func_call) {
     codegen_exp(args[i]);
     signs[i] = exp_sign(args[i]);
   }
-  if (symbol->func_def->func_type == BType_VOID) {
+  if (symbol->func_type.return_type == BType_VOID) {
     outputf("  call @%s(", symbol->name);
   } else {
     outputf("  %%%d = call @%s(", temp_sign_index, symbol->name);
@@ -943,7 +959,7 @@ static void codegen_comp_unit(AstCompUnit *comp_unit) {
   for (int i = 0; i < comp_unit->count; i++) {
     AstFuncDef *func_def = (AstFuncDef *)comp_unit->func_defs[i];
     Symbol *symbol = new_symbol(func_def->ident->name, SymbolType_func);
-    symbol->func_def = func_def;
+    update_func_type(func_def, &symbol->func_type);
     codegen_func_def(func_def);
     if (strcmp(func_def->ident->name, "main") == 0 &&
         func_def->func_type == BType_INT) {
@@ -955,6 +971,63 @@ static void codegen_comp_unit(AstCompUnit *comp_unit) {
   if (!has_main) {
     fatalf("入口函数 main 不存在\n");
   }
+}
+
+// 生成 SysY 运行时库的声明
+static void codegen_lib_decl(void) {
+  Symbol *symbol = NULL;
+  outputf("decl @getint(): i32\n");
+  symbol = new_symbol("getint", SymbolType_func);
+  symbol->func_type.return_type = BType_INT;
+  symbol->func_type.param_count = 0;
+  symbol->func_type.param_types = NULL;
+
+  outputf("decl @getch(): i32\n");
+  symbol = new_symbol("getch", SymbolType_func);
+  symbol->func_type.return_type = BType_INT;
+  symbol->func_type.param_count = 0;
+  symbol->func_type.param_types = NULL;
+
+  outputf("decl @getarray(*i32): i32\n");
+  symbol = new_symbol("getarray", SymbolType_func);
+  symbol->func_type.return_type = BType_INT;
+  symbol->func_type.param_count = 1;
+  symbol->func_type.param_types = malloc(sizeof(BType));
+  symbol->func_type.param_types[0] = BType_POINTER;
+
+  outputf("decl @putint(i32)\n");
+  symbol = new_symbol("putint", SymbolType_func);
+  symbol->func_type.return_type = BType_VOID;
+  symbol->func_type.param_count = 1;
+  symbol->func_type.param_types = malloc(sizeof(BType));
+  symbol->func_type.param_types[0] = BType_INT;
+
+  outputf("decl @putch(i32)\n");
+  symbol = new_symbol("putch", SymbolType_func);
+  symbol->func_type.return_type = BType_VOID;
+  symbol->func_type.param_count = 1;
+  symbol->func_type.param_types = malloc(sizeof(BType));
+  symbol->func_type.param_types[0] = BType_INT;
+
+  outputf("decl @putarray(i32, *i32)\n");
+  symbol = new_symbol("putarray", SymbolType_func);
+  symbol->func_type.return_type = BType_VOID;
+  symbol->func_type.param_count = 2;
+  symbol->func_type.param_types = malloc(sizeof(BType) * 2);
+  symbol->func_type.param_types[0] = BType_INT;
+  symbol->func_type.param_types[1] = BType_POINTER;
+
+  outputf("decl @starttime()\n");
+  symbol = new_symbol("starttime", SymbolType_func);
+  symbol->func_type.return_type = BType_VOID;
+  symbol->func_type.param_count = 0;
+  symbol->func_type.param_types = NULL;
+
+  outputf("decl @stoptime()\n");
+  symbol = new_symbol("stoptime", SymbolType_func);
+  symbol->func_type.return_type = BType_VOID;
+  symbol->func_type.param_count = 0;
+  symbol->func_type.param_types = NULL;
 }
 
 // #endregion
@@ -981,6 +1054,7 @@ void koopa_ir_codegen(AstCompUnit *comp_unit, const char *output_file) {
   // 优化 AST
   optimize_comp_unit(comp_unit);
   // 生成 IR
+  codegen_lib_decl();
   codegen_comp_unit(comp_unit);
   fclose(fp);
 }

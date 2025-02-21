@@ -32,6 +32,7 @@ typedef enum {
   BType_UNKNOWN,
   BType_INT,
   BType_VOID,
+  BType_POINTER,
 } BType;
 const char *btype_to_string(BType type);
 

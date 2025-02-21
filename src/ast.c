@@ -61,6 +61,8 @@ const char *btype_to_string(BType type) {
     return "int";
   case BType_VOID:
     return "void";
+  case BType_POINTER:
+    return "pointer";
   }
   fatalf("Invalid BType: %d\n", type);
   return "";

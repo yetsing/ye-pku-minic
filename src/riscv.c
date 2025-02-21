@@ -108,7 +108,7 @@ static void visit_koopa_raw_program(const koopa_raw_program_t program);
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary);
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch);
 static void visit_koopa_raw_jump(const koopa_raw_jump_t jump);
-static void visit_koopa_raw_call(const koopa_raw_call_t call);
+static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return);
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("\n  # === return ===\n");
@@ -285,7 +285,7 @@ static void visit_koopa_raw_jump(const koopa_raw_jump_t jump) {
   outputf("  j %s\n", jump.target->name + 1);
 }
 
-static void visit_koopa_raw_call(const koopa_raw_call_t call) {
+static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
   outputf("\n  # === call ===\n");
   int *arg_offsets = (int *)malloc(call.args.len * sizeof(int));
   memset(arg_offsets, 0, call.args.len * sizeof(int));
@@ -324,10 +324,12 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call) {
 
   // 调用函数
   outputf("  call %s\n", call.callee->name + 1); // + 1 是为了跳过函数名前的 @
-  // 保存返回值
-  temp_index++; // 存在返回值，所以栈指针需要移动
-  outputf("  sw a0, %d(sp)\n", get_temp_offset());
-  outputf("  mv t0, a0\n");
+  if (has_return) {
+    // 保存返回值
+    temp_index++; // 存在返回值，所以栈指针需要移动
+    outputf("  sw a0, %d(sp)\n", get_temp_offset());
+    outputf("  mv t0, a0\n");
+  }
   outputf("  # === call end ===\n");
 }
 
@@ -360,7 +362,7 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
     visit_koopa_raw_jump(kind.data.jump);
     break;
   case KOOPA_RVT_CALL:
-    visit_koopa_raw_call(kind.data.call);
+    visit_koopa_raw_call(kind.data.call, value->used_by.len > 0);
     break;
   }
   default:
@@ -440,11 +442,17 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice) {
     const void *ptr = slice.buffer[i];
     // 根据 slice 的 kind 决定将 ptr 视作何种元素
     switch (slice.kind) {
-    case KOOPA_RSIK_FUNCTION:
+    case KOOPA_RSIK_FUNCTION: {
+      koopa_raw_function_t func = ptr;
+      if (func->bbs.len == 0) {
+        // 如果函数没有基本块，说明只是函数声明，直接跳过
+        continue;
+      }
       // + 1 是为了跳过函数名前的 @
       outputf("  .globl %s\n", ((koopa_raw_function_t)ptr)->name + 1);
       visit_koopa_raw_function(ptr);
       break;
+    }
     case KOOPA_RSIK_BASIC_BLOCK:
       visit_koopa_raw_basic_block(ptr);
       break;
