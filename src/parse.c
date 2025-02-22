@@ -13,6 +13,7 @@
 typedef struct {
   Token current;
   Token next;
+  Token next2;
 } Parser;
 
 static Parser parser;
@@ -34,7 +35,8 @@ static AstBlock *parse_block(void);
 
 static void advance(void) {
   parser.current = parser.next;
-  parser.next = next_token();
+  parser.next = parser.next2;
+  parser.next2 = next_token();
 }
 
 static void consume(TokenType type) {
@@ -85,6 +87,8 @@ __attribute__((unused)) static bool peek_eq(const char *s) {
   return strlen(s) == parser.next.length &&
          strncmp(parser.next.start, s, parser.next.length) == 0;
 }
+
+static bool peek2_is(TokenType type) { return parser.next2.type == type; }
 
 BinaryOpType token_type_to_binary_op_type(TokenType type) {
   switch (type) {
@@ -526,17 +530,26 @@ static AstFuncDef *parse_func_def(void) {
   return func_def;
 }
 
-// CompUnit  ::= (FuncDef)+;
+// CompUnit  ::= (Decl | FuncDef)+;
 static AstCompUnit *parse_comp_unit(void) {
   AstCompUnit *comp_unit = new_ast_comp_unit();
   while (!current_is(TOKEN_EOF)) {
-    AstFuncDef *func_def = parse_func_def();
-    ast_comp_unit_add(comp_unit, (AstBase *)func_def);
+    if (current_eq("const") ||
+        (current_eq("int") && peek_is(TOKEN_IDENTIFIER) &&
+         !peek2_is(TOKEN_LPAREN))) {
+      AstStmt *decl = parse_decl();
+      ast_comp_unit_add(comp_unit, (AstBase *)decl);
+    } else {
+      AstFuncDef *func_def = parse_func_def();
+      ast_comp_unit_add(comp_unit, (AstBase *)func_def);
+    }
   }
+  consume(TOKEN_EOF);
   return comp_unit;
 }
 
 static void init_parser(void) {
+  advance();
   advance();
   advance();
 }

@@ -39,7 +39,29 @@ typedef struct Variable {
   int count; // 计数
 } Variable;
 
-static Variable locals = {NULL, 0, NULL, 0}; // 局部变量
+static Variable globals = {NULL, 0, NULL, 0}; // 全局变量
+static Variable locals = {NULL, 0, NULL, 0};  // 局部变量
+
+static void new_global_variable(const char *name) {
+  assert(name != NULL);
+  Variable *var = (Variable *)malloc(sizeof(Variable));
+  var->name = name;
+  var->offset = 0;
+  var->next = globals.next;
+  globals.next = var;
+  globals.count++;
+}
+
+static bool is_global(const char *name) {
+  Variable *var = globals.next;
+  while (var != NULL) {
+    if (strcmp(var->name, name) == 0) {
+      return true;
+    }
+    var = var->next;
+  }
+  return false;
+}
 
 static int new_variable(const char *name) {
   assert(name != NULL);
@@ -109,6 +131,8 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary);
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch);
 static void visit_koopa_raw_jump(const koopa_raw_jump_t jump);
 static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return);
+static void visit_koopa_raw_global_alloc(const koopa_raw_global_alloc_t alloc,
+                                         const char *name);
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("\n  # === return ===\n");
@@ -235,8 +259,7 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     outputf("  or %s, %s, %s\n", result_register, lhs_register, rhs_register);
     break;
   default:
-    printf("visit_koopa_raw_binary unknown op: %d\n", binary.op);
-    assert(false);
+    fatalf("visit_koopa_raw_binary unknown op: %d\n", binary.op);
   }
   temp_index++; // 存在返回值，所以栈指针需要移动
   // 将结果存储到栈上
@@ -246,7 +269,12 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
 
 static void visit_koopa_raw_load(const koopa_raw_load_t load) {
   temp_index++; // 存在返回值，所以栈指针需要移动
-  outputf("  lw t0, %d(sp)\n", get_offset(load.src->name));
+  if (is_global(load.src->name)) {
+    outputf("  la t0, %s\n", load.src->name + 1);
+    outputf("  lw t0, 0(t0)\n");
+  } else {
+    outputf("  lw t0, %d(sp)\n", get_offset(load.src->name));
+  }
   outputf("  sw t0, %d(sp)\n", get_temp_offset());
 }
 
@@ -267,7 +295,12 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
     visit_koopa_raw_value(store.value);
     // 结果已经在 t0 中了，直接存储到栈上
     // outputf("  lw t0, %d(sp)\n", get_temp_offset());
-    outputf("  sw t0, %d(sp)\n", get_offset(store.dest->name));
+    if (is_global(store.dest->name)) {
+      outputf("  la t1, %s\n", store.dest->name + 1);
+      outputf("  sw t0, 0(t1)\n");
+    } else {
+      outputf("  sw t0, %d(sp)\n", get_offset(store.dest->name));
+    }
   }
 }
 
@@ -333,6 +366,21 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
   outputf("  # === call end ===\n");
 }
 
+static void visit_koopa_raw_global_alloc(const koopa_raw_global_alloc_t alloc,
+                                         const char *name) {
+  new_global_variable(name);
+  outputf("  .global %s\n", name + 1);
+  outputf("%s:\n", name + 1);
+  if (alloc.init->kind.tag == KOOPA_RVT_INTEGER) {
+    outputf("  .word %d\n", alloc.init->kind.data.integer.value);
+  } else if (alloc.init->kind.tag == KOOPA_RVT_ZERO_INIT) {
+    outputf("  .zero 4\n");
+  } else {
+    fatalf("visit_koopa_raw_global_alloc unknown kind: %d\n",
+           alloc.init->kind.tag);
+  }
+}
+
 static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   koopa_raw_value_kind_t kind = value->kind;
   switch (kind.tag) {
@@ -342,7 +390,7 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   case KOOPA_RVT_INTEGER:
     visit_koopa_raw_integer(kind.data.integer);
     break;
-  case KOOPA_RVT_BINARY: {
+  case KOOPA_RVT_BINARY:
     visit_koopa_raw_binary(kind.data.binary);
     break;
   case KOOPA_RVT_LOAD:
@@ -364,10 +412,11 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   case KOOPA_RVT_CALL:
     visit_koopa_raw_call(kind.data.call, value->used_by.len > 0);
     break;
-  }
+  case KOOPA_RVT_GLOBAL_ALLOC:
+    visit_koopa_raw_global_alloc(kind.data.global_alloc, value->name);
+    break;
   default:
-    printf("visit_koopa_raw_value unknown kind: %d\n", kind.tag);
-    assert(false);
+    fatalf("visit_koopa_raw_value unknown kind: %d\n", kind.tag);
   }
 }
 
@@ -419,7 +468,6 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
     stack_size += (max_call_args - 8) * 4;
     locals_add_offset((max_call_args - 8) * 4);
   }
-  printf("stack_size: %zu, local count: %d\n", stack_size, locals.count);
   // 对齐到 16 字节
   stack_size = (stack_size + 15) & ~15;
 
@@ -458,7 +506,8 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice) {
       break;
     case KOOPA_RSIK_VALUE: {
       const koopa_raw_value_t value = ptr;
-      if (value->used_by.len == 0) {
+      if ((value->used_by.len == 0) ||
+          (value->kind.tag == KOOPA_RVT_GLOBAL_ALLOC)) {
         // 在处理 used_by 的时候，会将这个 value 也处理
         // 这里做个判断，避免重复处理
         // 比如说这两条 IR 指令:
@@ -472,16 +521,16 @@ static void visit_koopa_raw_slice(const koopa_raw_slice_t slice) {
       break;
     }
     default:
-      printf("visit_koopa_raw_slice unknown kind: %d\n", slice.kind);
-      assert(false);
+      fatalf("visit_koopa_raw_slice unknown kind: %d\n", slice.kind);
     }
   }
 }
 
 static void visit_koopa_raw_program(const koopa_raw_program_t program) {
-  outputf("  .text\n");
+  outputf("  .data\n");
   visit_koopa_raw_slice(program.values); // 全局变量
-  visit_koopa_raw_slice(program.funcs);  // 函数
+  outputf("  .text\n");
+  visit_koopa_raw_slice(program.funcs); // 函数
 }
 
 void riscv_codegen(const char *ir, const char *output_file) {

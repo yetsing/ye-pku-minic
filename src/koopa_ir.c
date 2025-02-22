@@ -281,6 +281,13 @@ AstExp *optimize_binary_exp(AstBinaryExp *binary_exp) {
 
 AstExp *optimize_exp(AstExp *exp) {
   switch (exp->type) {
+  case AST_FUNC_CALL: {
+    AstFuncCall *func_call = (AstFuncCall *)exp;
+    for (int i = 0; i < func_call->count; i++) {
+      func_call->args[i] = optimize_exp(func_call->args[i]);
+    }
+    return exp;
+  }
   case AST_UNARY_EXP: {
     return optimize_unary_exp((AstUnaryExp *)exp);
   }
@@ -304,11 +311,22 @@ AstExp *optimize_exp(AstExp *exp) {
 void optimize_const_decl(AstConstDecl *decl) {
   AstConstDef *def = decl->def;
   while (def) {
-    if (is_const_exp(def->exp)) {
+    int value = eval_const_exp(def->exp);
+    printf("优化常量 %s = %d\n", def->name, value);
+    Symbol *symbol = new_symbol(def->name, SymbolType_int);
+    symbol->is_const_value = true;
+    symbol->value = value;
+    def = def->next;
+  }
+}
+
+void optimize_global_var_decl(AstVarDecl *decl) {
+  AstVarDef *def = decl->def;
+  while (def) {
+    if (def->exp) {
       int value = eval_const_exp(def->exp);
-      Symbol *symbol = new_symbol(def->name, SymbolType_int);
-      symbol->is_const_value = true;
-      symbol->value = value;
+      def->exp = (AstExp *)new_ast_number();
+      ((AstNumber *)def->exp)->number = value;
     }
     def = def->next;
   }
@@ -410,10 +428,27 @@ void optimize_block(AstBlock *block) {
 //  - 常量替换，例如 const a = 1; const b = a + 2; -> const a = 1; const b = 3;
 void optimize_comp_unit(AstCompUnit *comp_unit) {
   for (int i = 0; i < comp_unit->count; i++) {
-    AstFuncDef *func_def = (AstFuncDef *)comp_unit->func_defs[i];
-    optimize_block(func_def->block);
-  }
+    AstBase *def = comp_unit->defs[i];
+    switch (def->type) {
 
+    case AST_FUNC_DEF: {
+      AstFuncDef *func_def = (AstFuncDef *)def;
+      optimize_block(func_def->block);
+      break;
+    }
+    case AST_CONST_DECL: {
+      optimize_const_decl((AstConstDecl *)def);
+      break;
+    }
+    case AST_VAR_DECL: {
+      optimize_global_var_decl((AstVarDecl *)def);
+      break;
+    }
+    default: {
+      fatalf("未知的定义类型\n");
+    }
+    }
+  }
   // 重置符号表
   reset_symbol_table();
 
@@ -421,7 +456,6 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
   comp_unit->base.dump((AstBase *)comp_unit, 4);
   printf("\n");
 }
-
 // #endregion
 
 // #region 生成 IR
@@ -881,6 +915,21 @@ static void codegen_block(AstBlock *block) {
   }
   leave_scope();
 }
+static void codegen_global_var_decl(AstVarDecl *decl) {
+  AstVarDef *def = decl->def;
+  while (def) {
+    Symbol *symbol = new_symbol(def->name, SymbolType_int);
+    const char *name = symbol_unique_name(symbol);
+    outputf("global %s = alloc i32, ", name);
+    if (def->exp) {
+      outputf("%d\n", ((AstNumber *)def->exp)->number);
+    } else {
+      outputf("zeroinit\n");
+    }
+    free((void *)name);
+    def = def->next;
+  }
+}
 
 static void codegen_func_def(AstFuncDef *func_def) {
   temp_sign_index = 0;
@@ -957,13 +1006,21 @@ static void codegen_func_def(AstFuncDef *func_def) {
 static void codegen_comp_unit(AstCompUnit *comp_unit) {
   bool has_main = false;
   for (int i = 0; i < comp_unit->count; i++) {
-    AstFuncDef *func_def = (AstFuncDef *)comp_unit->func_defs[i];
-    Symbol *symbol = new_symbol(func_def->ident->name, SymbolType_func);
-    update_func_type(func_def, &symbol->func_type);
-    codegen_func_def(func_def);
-    if (strcmp(func_def->ident->name, "main") == 0 &&
-        func_def->func_type == BType_INT) {
-      has_main = true;
+    if (comp_unit->defs[i]->type == AST_FUNC_DEF) {
+      AstFuncDef *func_def = (AstFuncDef *)comp_unit->defs[i];
+      Symbol *symbol = new_symbol(func_def->ident->name, SymbolType_func);
+      update_func_type(func_def, &symbol->func_type);
+      codegen_func_def(func_def);
+      if (strcmp(func_def->ident->name, "main") == 0 &&
+          func_def->func_type == BType_INT) {
+        has_main = true;
+      }
+    } else if (comp_unit->defs[i]->type == AST_VAR_DECL) {
+      codegen_global_var_decl((AstVarDecl *)comp_unit->defs[i]);
+    } else if (comp_unit->defs[i]->type == AST_CONST_DECL) {
+      // 常量声明在优化阶段已经处理了
+    } else {
+      fatalf("未知的定义类型\n");
     }
   }
   // 在该 CompUnit 中, 必须存在且仅存在一个标识为 main, 无参数, 返回类型为 int

@@ -217,7 +217,7 @@ AstFuncDef *new_ast_func_def();
 
 typedef struct {
   AstBase base;
-  AstBase **func_defs;
+  AstBase **defs;
   int count;
   int capacity;
 } AstCompUnit;

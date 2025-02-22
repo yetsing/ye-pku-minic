@@ -471,7 +471,7 @@ void ast_comp_unit_dump(AstCompUnit *node, int indent) {
   printf("%*sCompUnit: {\n", indent, indent > 0 ? " " : "");
   for (int i = 0; i < node->count; i++) {
     printf("%*s  ", indent, " ");
-    node->func_defs[i]->dump(node->func_defs[i], indent + 2);
+    node->defs[i]->dump(node->defs[i], indent + 2);
     printf(",\n");
   }
   printf("%*s}", indent, " ");
@@ -483,14 +483,14 @@ AstCompUnit *new_ast_comp_unit() {
   node->base.dump = (DumpFunc)ast_comp_unit_dump;
   node->count = 0;
   node->capacity = 10;
-  node->func_defs = calloc(node->capacity, sizeof(AstBase *));
+  node->defs = calloc(node->capacity, sizeof(AstBase *));
   return node;
 }
 void ast_comp_unit_add(AstCompUnit *comp_unit, AstBase *node) {
   if (comp_unit->count >= comp_unit->capacity) {
     comp_unit->capacity *= 2;
-    comp_unit->func_defs =
-        realloc(comp_unit->func_defs, comp_unit->capacity * sizeof(AstBase *));
+    comp_unit->defs =
+        realloc(comp_unit->defs, comp_unit->capacity * sizeof(AstBase *));
   }
-  comp_unit->func_defs[comp_unit->count++] = node;
+  comp_unit->defs[comp_unit->count++] = node;
 }
