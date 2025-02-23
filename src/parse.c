@@ -19,6 +19,7 @@ typedef struct {
 static Parser parser;
 
 static AstExp *parse_exp(void);
+static AstExp *parse_lval(void);
 static AstExp *parse_primary_exp(void);
 static AstNumber *parse_number(void);
 static AstIdentifier *parse_identifier(void);
@@ -157,11 +158,25 @@ static AstNumber *parse_number(void) {
   return number;
 }
 
-// PrimaryExp  ::= "(" Exp ")" | IDENT | Number;
+// ArrayVal  ::= "{" ( Exp ("," Exp)* )? "}";
+static AstArrayValue *parse_array_value(void) {
+  AstArrayValue *array_value = new_ast_array_value();
+  consume(TOKEN_LBRACE);
+  if (!try_consume(TOKEN_RBRACE)) {
+    do {
+      AstExp *exp = parse_exp();
+      ast_array_value_add(array_value, exp);
+    } while (try_consume(TOKEN_COMMA));
+    consume(TOKEN_RBRACE);
+  }
+  return array_value;
+}
+
+// PrimaryExp  ::= "(" Exp ")" | LVal | Number;
 static AstExp *parse_primary_exp(void) {
   switch (parser.current.type) {
   case TOKEN_IDENTIFIER:
-    return (AstExp *)parse_identifier();
+    return parse_lval();
   case TOKEN_INTEGER:
     return (AstExp *)parse_number();
   case TOKEN_LPAREN:
@@ -310,15 +325,19 @@ static AstStmt *parse_return_stmt(void) {
   return (AstStmt *)stmt;
 }
 
-// AssignStmt        ::= IDENT "=" Exp ";";
-static AstStmt *parse_assign_stmt(void) {
-  AstAssignStmt *stmt = new_ast_assign_stmt();
-  stmt->lhs = (AstExp *)parse_identifier();
-  consume(TOKEN_ASSIGN);
-  stmt->exp = parse_exp();
-  consume(TOKEN_SEMICOLON);
-  return (AstStmt *)stmt;
-}
+// LVal              ::= IDENT ("[" Exp "]")?;
+static AstExp *parse_lval(void) {
+  if (peek_is(TOKEN_LBRACKET)) {
+    AstArrayAccess *array_access = new_ast_array_access();
+    array_access->name = strndup(parser.current.start, parser.current.length);
+    consume(TOKEN_IDENTIFIER);
+    consume(TOKEN_LBRACKET);
+    array_access->index = parse_exp();
+    consume(TOKEN_RBRACKET);
+    return (AstExp *)array_access;
+  }
+  return (AstExp *)parse_identifier();
+};
 
 // FuncType  ::= "int";
 static BType parse_func_type(void) {
@@ -338,7 +357,28 @@ static AstIdentifier *parse_identifier(void) {
   return ident;
 }
 
-// ConstDecl   ::= "const" "int" IDENT "=" Exp ("," IDENT "=" Exp)* ";";
+// ConstDef    ::= IDENT ("[" ConstExp "]")? "=" ConstInitVal;
+// ConstInitVal::= ConstExp | ArrayVal;
+// ConstExp    ::= Exp;
+static AstConstDef *parse_const_def(void) {
+  AstConstDef *def = new_ast_const_def();
+  def->name = strndup(parser.current.start, parser.current.length);
+  consume(TOKEN_IDENTIFIER);
+  if (current_is(TOKEN_LBRACKET)) {
+    advance();
+    def->array_size = parse_exp();
+    consume(TOKEN_RBRACKET);
+  }
+  match("=");
+  if (current_is(TOKEN_LBRACE)) {
+    def->val = (AstExp *)parse_array_value();
+  } else {
+    def->val = parse_exp();
+  }
+  return def;
+}
+
+// ConstDecl   ::= "const" "int" ConstDef ("," ConstDef)* ";";
 static AstConstDecl *parse_const_decl(void) {
   AstConstDecl *const_decl = new_ast_const_decl();
   match("const");
@@ -347,21 +387,37 @@ static AstConstDecl *parse_const_decl(void) {
   AstConstDef head;
   AstConstDef *tail = &head;
   do {
-    AstConstDef *def = new_ast_const_def();
-    def->name = strndup(parser.current.start, parser.current.length);
-    consume(TOKEN_IDENTIFIER);
-    match("=");
-    def->exp = parse_exp();
-    tail->next = def;
-    tail = def;
+    tail->next = parse_const_def();
+    tail = tail->next;
   } while (try_consume(TOKEN_COMMA));
   consume(TOKEN_SEMICOLON);
   const_decl->def = head.next;
   return const_decl;
 }
 
+// VarDef        ::= IDENT ("[" ConstExp "]")?
+//                 | IDENT ("[" ConstExp "]")? "=" InitVal;
+// InitVal       ::= Exp | "{" (Exp ("," Exp)*)? "}";
+static AstVarDef *parse_var_def(void) {
+  AstVarDef *def = new_ast_var_def();
+  def->name = strndup(parser.current.start, parser.current.length);
+  consume(TOKEN_IDENTIFIER);
+  if (current_is(TOKEN_LBRACKET)) {
+    advance();
+    def->array_size = parse_exp();
+    consume(TOKEN_RBRACKET);
+  }
+  if (try_consume(TOKEN_ASSIGN)) {
+    if (current_is(TOKEN_LBRACE)) {
+      def->val = (AstExp *)parse_array_value();
+    } else {
+      def->val = parse_exp();
+    }
+  }
+  return def;
+}
+
 // VarDecl       ::= "int" VarDef ("," VarDef)* ";";
-// VarDef        ::= IDENT | IDENT "=" InitVal;
 static AstVarDecl *parse_var_decl(void) {
   AstVarDecl *var_decl = new_ast_var_decl();
   match("int");
@@ -369,26 +425,12 @@ static AstVarDecl *parse_var_decl(void) {
   AstVarDef head;
   AstVarDef *tail = &head;
   do {
-    AstVarDef *def = new_ast_var_def();
-    def->name = strndup(parser.current.start, parser.current.length);
-    consume(TOKEN_IDENTIFIER);
-    if (try_consume(TOKEN_ASSIGN)) {
-      def->exp = parse_exp();
-    }
-    tail->next = def;
-    tail = def;
+    tail->next = parse_var_def();
+    tail = tail->next;
   } while (try_consume(TOKEN_COMMA));
   consume(TOKEN_SEMICOLON);
   var_decl->def = head.next;
   return var_decl;
-}
-
-// ExpStmt       ::= Exp ";";
-static AstExpStmt *parse_exp_stmt(void) {
-  AstExpStmt *stmt = new_ast_exp_stmt();
-  stmt->exp = parse_exp();
-  consume(TOKEN_SEMICOLON);
-  return stmt;
 }
 
 // IfStmt       ::= "if" "(" Exp ")" Stmt ("else" Stmt)?;
@@ -441,11 +483,11 @@ static AstContinueStmt *parse_continue_stmt(void) {
 //                 | ContinueStmt
 //                 | WhileStmt
 //                 | ReturnStmt;
+// ExpStmt       ::= Exp ";";
+// AssignStmt    ::= LVal "=" Exp ";";
 static AstStmt *parse_stmt(void) {
   if (current_eq("return")) {
     return parse_return_stmt();
-  } else if (current_is(TOKEN_IDENTIFIER) && peek_is(TOKEN_ASSIGN)) {
-    return parse_assign_stmt();
   } else if (current_is(TOKEN_LBRACE)) {
     return (AstStmt *)parse_block();
   } else if (current_is(TOKEN_SEMICOLON)) {
@@ -460,7 +502,20 @@ static AstStmt *parse_stmt(void) {
   } else if (current_eq("break")) {
     return (AstStmt *)parse_break_stmt();
   } else {
-    return (AstStmt *)parse_exp_stmt();
+    AstExp *exp = parse_exp();
+    if (current_is(TOKEN_ASSIGN)) {
+      AstAssignStmt *stmt = new_ast_assign_stmt();
+      stmt->lhs = exp;
+      consume(TOKEN_ASSIGN);
+      stmt->exp = parse_exp();
+      consume(TOKEN_SEMICOLON);
+      return (AstStmt *)stmt;
+    } else {
+      AstExpStmt *stmt = new_ast_exp_stmt();
+      stmt->exp = exp;
+      consume(TOKEN_SEMICOLON);
+      return (AstStmt *)stmt;
+    }
   }
 }
 

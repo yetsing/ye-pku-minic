@@ -40,10 +40,16 @@ if [ -n "$1" ]; then
     docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
         autotest -riscv -s lv7 /root/compiler
 
+    docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
+        autotest -koopa -s lv8 /root/compiler
+
+    docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
+        autotest -riscv -s lv8 /root/compiler
+
 fi
 
 docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
-    autotest -koopa -s lv8 /root/compiler
+    autotest -koopa -s lv9 /root/compiler
 
-docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
-    autotest -riscv -s lv8 /root/compiler
+# docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
+# autotest -riscv -s lv9 /root/compiler

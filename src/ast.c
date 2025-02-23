@@ -8,6 +8,8 @@ const char *ast_type_to_string(AstType type) {
   switch (type) {
   case AST_NUMBER:
     return "number";
+  case AST_ARRAY_VALUE:
+    return "array_value";
   case AST_UNARY_EXP:
     return "unary_exp";
   case AST_BINARY_EXP:
@@ -32,6 +34,8 @@ const char *ast_type_to_string(AstType type) {
     return "var_decl";
   case AST_IDENTIFIER:
     return "identifier";
+  case AST_ARRAY_ACCESS:
+    return "array_access";
   case AST_BLOCK:
     return "block";
   case AST_FUNC_DEF:
@@ -113,6 +117,35 @@ AstNumber *new_ast_number() {
   return node;
 }
 
+void ast_array_value_dump(AstArrayValue *node, int indent) {
+  printf("ArrayValue: {\n");
+  for (int i = 0; i < node->count; i++) {
+    printf("%*s  ", indent, " ");
+    node->elements[i]->dump((AstBase *)node->elements[i], indent + 2);
+    printf(",\n");
+  }
+  printf("%*s}", indent, " ");
+}
+
+AstArrayValue *new_ast_array_value() {
+  AstArrayValue *node = calloc(1, sizeof(AstArrayValue));
+  node->base.type = AST_ARRAY_VALUE;
+  node->base.dump = (DumpFunc)ast_array_value_dump;
+  node->count = 0;
+  node->capacity = 10;
+  node->elements = calloc(node->capacity, sizeof(AstExp *));
+  return node;
+}
+
+void ast_array_value_add(AstArrayValue *array_value, AstExp *element) {
+  if (array_value->count >= array_value->capacity) {
+    array_value->capacity *= 2;
+    array_value->elements = realloc(array_value->elements,
+                                    array_value->capacity * sizeof(AstExp *));
+  }
+  array_value->elements[array_value->count++] = element;
+}
+
 void ast_identifier_dump(AstIdentifier *node, int indent) {
   printf("%s", node->name);
 }
@@ -122,6 +155,24 @@ AstIdentifier *new_ast_identifier() {
   node->base.type = AST_IDENTIFIER;
   node->base.dump = (DumpFunc)ast_identifier_dump;
   node->name = NULL;
+  return node;
+}
+
+void ast_array_access_dump(AstArrayAccess *node, int indent) {
+  printf("AstArrayAccess: {\n");
+  printf("%*s  name: %s,\n", indent, " ", node->name);
+  printf("%*s  index: ", indent, " ");
+  node->index->dump((AstBase *)node->index, indent + 2);
+  printf(",\n");
+  printf("%*s}", indent, " ");
+}
+
+AstArrayAccess *new_ast_array_access() {
+  AstArrayAccess *node = calloc(1, sizeof(AstArrayAccess));
+  node->base.type = AST_ARRAY_ACCESS;
+  node->base.dump = (DumpFunc)ast_array_access_dump;
+  node->name = NULL;
+  node->index = NULL;
   return node;
 }
 
@@ -331,9 +382,14 @@ AstAssignStmt *new_ast_assign_stmt() {
 
 void ast_const_def_dump(AstConstDef *node, int indent) {
   printf("ConstDef: {\n");
-  printf("%*s  name: %s,\n", indent, " ", node->name);
-  printf("%*s  exp: ", indent, " ");
-  node->exp->dump((AstBase *)node->exp, indent + 2);
+  printf("%*s  name: %s\n", indent, " ", node->name);
+  if (node->array_size) {
+    printf("%*s  index: ", indent, " ");
+    node->array_size->dump((AstBase *)node->array_size, indent + 2);
+    printf(",\n");
+  }
+  printf("%*s  val: ", indent, " ");
+  node->val->dump((AstBase *)node->val, indent + 2);
   printf(",\n");
   printf("%*s}", indent, " ");
 }
@@ -343,7 +399,8 @@ AstConstDef *new_ast_const_def() {
   node->base.type = AST_CONST_DEF;
   node->base.dump = (DumpFunc)ast_const_def_dump;
   node->name = NULL;
-  node->exp = NULL;
+  node->array_size = NULL;
+  node->val = NULL;
   node->next = NULL;
   return node;
 }
@@ -374,9 +431,14 @@ AstConstDecl *new_ast_const_decl() {
 void ast_var_def_dump(AstVarDef *node, int indent) {
   printf("VarDef: {\n");
   printf("%*s  name: %s,\n", indent, " ", node->name);
-  if (node->exp) {
-    printf("%*s  exp: ", indent, " ");
-    node->exp->dump((AstBase *)node->exp, indent + 2);
+  if (node->array_size) {
+    printf("%*s  array_size: ", indent, " ");
+    node->array_size->dump((AstBase *)node->array_size, indent + 2);
+    printf(",\n");
+  }
+  if (node->val) {
+    printf("%*s  val: ", indent, " ");
+    node->val->dump((AstBase *)node->val, indent + 2);
     printf(",\n");
   }
   printf("%*s}", indent, " ");
@@ -386,8 +448,9 @@ AstVarDef *new_ast_var_def() {
   AstVarDef *node = calloc(1, sizeof(AstVarDef));
   node->base.type = AST_VAR_DEF;
   node->base.dump = (DumpFunc)ast_var_def_dump;
+  node->array_size = NULL;
   node->name = NULL;
-  node->exp = NULL;
+  node->val = NULL;
   return node;
 }
 

@@ -5,10 +5,12 @@
 
 typedef enum {
   AST_NUMBER,
+  AST_ARRAY_VALUE,
   AST_UNARY_EXP,
   AST_BINARY_EXP,
   AST_FUNC_CALL,
   AST_IDENTIFIER,
+  AST_ARRAY_ACCESS,
   AST_STMT,
   AST_EXP_STMT,
   AST_CONST_DECL,
@@ -75,9 +77,25 @@ AstNumber *new_ast_number();
 
 typedef struct {
   AstExp base;
+  AstExp **elements;
+  int count;
+  int capacity;
+} AstArrayValue;
+AstArrayValue *new_ast_array_value();
+void ast_array_value_add(AstArrayValue *array_value, AstExp *element);
+
+typedef struct {
+  AstExp base;
   const char *name;
 } AstIdentifier;
 AstIdentifier *new_ast_identifier();
+
+typedef struct {
+  AstExp base;
+  const char *name;
+  AstExp *index;
+} AstArrayAccess;
+AstArrayAccess *new_ast_array_access();
 
 typedef struct AstUnaryExp {
   AstExp base;
@@ -164,7 +182,8 @@ typedef struct AstConstDef AstConstDef;
 typedef struct AstConstDef {
   AstBase base;
   const char *name;
-  AstExp *exp;
+  AstExp *array_size;
+  AstExp *val;
   AstConstDef *next; // 使用链表结构存储多个常量定义
 } AstConstDef;
 AstConstDef *new_ast_const_def();
@@ -180,7 +199,8 @@ typedef struct AstVarDef AstVarDef;
 typedef struct AstVarDef {
   AstBase base;
   const char *name;
-  AstExp *exp;
+  AstExp *array_size;
+  AstExp *val;
   AstVarDef *next;
 } AstVarDef;
 AstVarDef *new_ast_var_def();

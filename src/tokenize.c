@@ -31,6 +31,10 @@ const char *token_type_to_string(TokenType type) {
     return "LBRACE";
   case TOKEN_RBRACE:
     return "RBRACE";
+  case TOKEN_LBRACKET:
+    return "LBRACKET";
+  case TOKEN_RBRACKET:
+    return "RBRACKET";
   case TOKEN_SEMICOLON:
     return "SEMICOLON";
   case TOKEN_COMMENT:
@@ -325,6 +329,12 @@ Token next_token(void) {
     case '}':
       advance();
       return (Token){TOKEN_RBRACE, tokenizer.start, 1, tokenizer.line};
+    case '[':
+      advance();
+      return (Token){TOKEN_LBRACKET, tokenizer.start, 1, tokenizer.line};
+    case ']':
+      advance();
+      return (Token){TOKEN_RBRACKET, tokenizer.start, 1, tokenizer.line};
     case ';':
       advance();
       return (Token){TOKEN_SEMICOLON, tokenizer.start, 1, tokenizer.line};

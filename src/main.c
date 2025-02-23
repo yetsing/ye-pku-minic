@@ -70,27 +70,27 @@ int main(int argc, char *argv[]) {
   }
 
   const char *input = read_from_file(input_file);
-  printf("=== Input ===\n");
-  printf("%s\n", input);
+  // printf("=== Input ===\n");
+  // printf("%s\n", input);
   AstCompUnit *comp_unit = parse(input);
   if (target == CODEGEN_TARGET_RISCV) {
-    printf("=== Koopa IR codegen result ===\n");
+    // printf("=== Koopa IR codegen result ===\n");
     koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
-    printf("%s\n", ir);
+    // printf("%s\n", ir);
     riscv_codegen(ir, output_file);
     free((void *)ir);
     const char *riscv = read_from_file(output_file);
-    printf("=== RISC-V codegen result ===\n");
-    printf("%s\n", riscv);
+    // printf("=== RISC-V codegen result ===\n");
+    // printf("%s\n", riscv);
     free((void *)riscv);
   } else if (target == CODEGEN_TARGET_KOOPA) {
-    printf("=== AST dump ===\n");
-    comp_unit->base.dump((AstBase *)comp_unit, 0);
-    printf("=== Koopa IR codegen result ===\n");
+    // printf("=== AST dump ===\n");
+    // comp_unit->base.dump((AstBase *)comp_unit, 0);
+    // printf("=== Koopa IR codegen result ===\n");
     koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
-    printf("%s\n", ir);
+    // printf("%s\n", ir);
     free((void *)ir);
   } else {
     fprintf(stderr, "未指定目标\n");

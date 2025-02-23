@@ -3,16 +3,17 @@ CompUnit      ::= [CompUnit] (Decl | FuncDef);
 Decl          ::= ConstDecl | VarDecl;
 ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
 BType         ::= "int";
-ConstDef      ::= IDENT "=" ConstInitVal;
-ConstInitVal  ::= ConstExp;
+ConstDef      ::= IDENT {"[" ConstExp "]"} "=" ConstInitVal;
+ConstInitVal  ::= ConstExp | "{" [ConstInitVal {"," ConstInitVal}] "}";
 VarDecl       ::= BType VarDef {"," VarDef} ";";
-VarDef        ::= IDENT | IDENT "=" InitVal;
-InitVal       ::= Exp;
+VarDef        ::= IDENT {"[" ConstExp "]"}
+                | IDENT {"[" ConstExp "]"} "=" InitVal;
+InitVal       ::= Exp | "{" [InitVal {"," InitVal}] "}";
 
 FuncDef       ::= FuncType IDENT "(" [FuncFParams] ")" Block;
 FuncType      ::= "void" | "int";
 FuncFParams   ::= FuncFParam {"," FuncFParam};
-FuncFParam    ::= BType IDENT;
+FuncFParam    ::= BType IDENT ["[" "]" {"[" ConstExp "]"}];
 
 Block         ::= "{" {BlockItem} "}";
 BlockItem     ::= Decl | Stmt;
@@ -26,7 +27,7 @@ Stmt          ::= LVal "=" Exp ";"
                 | "return" [Exp] ";";
 
 Exp           ::= LOrExp;
-LVal          ::= IDENT;
+LVal          ::= IDENT {"[" Exp "]"};
 PrimaryExp    ::= "(" Exp ")" | LVal | Number;
 Number        ::= INT_CONST;
 UnaryExp      ::= PrimaryExp | IDENT "(" [FuncRParams] ")" | UnaryOp UnaryExp;

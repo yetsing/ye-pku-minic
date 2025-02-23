@@ -46,6 +46,7 @@ static void outputf(const char *fmt, ...) {
 typedef enum {
   SymbolType_int,
   SymbolType_func,
+  SymbolType_array,
 } SymbolType;
 
 typedef struct {
@@ -162,6 +163,7 @@ static void leave_scope() {
 
 // #region 优化 AST
 
+int eval_const_exp(AstExp *exp);
 AstExp *optimize_exp(AstExp *exp);
 void optimize_block(AstBlock *block);
 void optimize_stmt(AstStmt *stmt);
@@ -189,10 +191,23 @@ bool is_const_exp(AstExp *exp) {
   return false;
 }
 
+int eval_array_value(AstArrayValue *array_value) {
+  AstExp **new_elements = malloc(sizeof(AstExp *) * array_value->count);
+  for (int i = 0; i < array_value->count; i++) {
+    int val = eval_const_exp(array_value->elements[i]);
+    new_elements[i] = (AstExp *)new_ast_number();
+    ((AstNumber *)new_elements[i])->number = val;
+  }
+  array_value->elements = new_elements;
+  return -1;
+}
+
 int eval_const_exp(AstExp *exp) {
   switch (exp->type) {
   case AST_NUMBER:
     return ((AstNumber *)exp)->number;
+  case AST_ARRAY_VALUE:
+    return eval_array_value((AstArrayValue *)exp);
   case AST_IDENTIFIER: {
     AstIdentifier *ident = (AstIdentifier *)exp;
     return eval_symbol(ident->name);
@@ -281,6 +296,18 @@ AstExp *optimize_binary_exp(AstBinaryExp *binary_exp) {
 
 AstExp *optimize_exp(AstExp *exp) {
   switch (exp->type) {
+  case AST_ARRAY_VALUE: {
+    AstArrayValue *array_value = (AstArrayValue *)exp;
+    for (int i = 0; i < array_value->count; i++) {
+      array_value->elements[i] = optimize_exp(array_value->elements[i]);
+    }
+    return exp;
+  }
+  case AST_ARRAY_ACCESS: {
+    AstArrayAccess *array_access = (AstArrayAccess *)exp;
+    array_access->index = optimize_exp(array_access->index);
+    return exp;
+  }
   case AST_FUNC_CALL: {
     AstFuncCall *func_call = (AstFuncCall *)exp;
     for (int i = 0; i < func_call->count; i++) {
@@ -303,19 +330,43 @@ AstExp *optimize_exp(AstExp *exp) {
     }
     return exp;
   }
-  default:
+  case AST_NUMBER: {
     return exp;
+  }
+  default:
+    fatalf("未知的表达式类型 %s\n", ast_type_to_string(exp->type));
+    return NULL;
   }
 }
 
 void optimize_const_decl(AstConstDecl *decl) {
   AstConstDef *def = decl->def;
   while (def) {
-    int value = eval_const_exp(def->exp);
-    printf("优化常量 %s = %d\n", def->name, value);
-    Symbol *symbol = new_symbol(def->name, SymbolType_int);
+    SymbolType symbol_type = SymbolType_int;
+    if (def->array_size) {
+      int size = eval_const_exp(def->array_size);
+      symbol_type = SymbolType_array;
+      AstNumber *number = new_ast_number();
+      number->number = size;
+      def->array_size = (AstExp *)number;
+    }
+    int value = eval_const_exp(def->val);
+    Symbol *symbol = new_symbol(def->name, symbol_type);
     symbol->is_const_value = true;
     symbol->value = value;
+    def = def->next;
+  }
+}
+
+void optimize_var_decl(AstVarDecl *decl) {
+  AstVarDef *def = decl->def;
+  while (def) {
+    if (def->array_size) {
+      def->array_size = optimize_exp(def->array_size);
+    }
+    if (def->val) {
+      def->val = optimize_exp(def->val);
+    }
     def = def->next;
   }
 }
@@ -323,10 +374,19 @@ void optimize_const_decl(AstConstDecl *decl) {
 void optimize_global_var_decl(AstVarDecl *decl) {
   AstVarDef *def = decl->def;
   while (def) {
-    if (def->exp) {
-      int value = eval_const_exp(def->exp);
-      def->exp = (AstExp *)new_ast_number();
-      ((AstNumber *)def->exp)->number = value;
+    bool is_array = def->array_size != NULL;
+    if (def->array_size) {
+      int size = eval_const_exp(def->array_size);
+      AstNumber *number = new_ast_number();
+      number->number = size;
+      def->array_size = (AstExp *)number;
+    }
+    if (def->val) {
+      int value = eval_const_exp(def->val);
+      if (!is_array) {
+        def->val = (AstExp *)new_ast_number();
+        ((AstNumber *)def->val)->number = value;
+      }
     }
     def = def->next;
   }
@@ -346,6 +406,7 @@ void optimize_stmt(AstStmt *stmt) {
   }
   case AST_ASSIGN_STMT: {
     AstAssignStmt *assign_stmt = (AstAssignStmt *)stmt;
+    assign_stmt->lhs = optimize_exp(assign_stmt->lhs);
     assign_stmt->exp = optimize_exp(assign_stmt->exp);
     break;
   }
@@ -370,36 +431,26 @@ void optimize_stmt(AstStmt *stmt) {
     optimize_stmt(while_stmt->body);
     break;
   }
+  case AST_BREAK_STMT:
+  case AST_CONTINUE_STMT:
+    break;
 
   default:
-    break;
+    fatalf("未知的语句类型 %s\n", ast_type_to_string(stmt->type));
   }
 }
 
 void optimize_block(AstBlock *block) {
-  AstStmt head;
-  head.next = NULL;
-  AstStmt *tail = &head;
   AstStmt *stmt = block->stmt;
   enter_scope();
   while (stmt) {
     switch (stmt->type) {
     case AST_CONST_DECL: {
       optimize_const_decl((AstConstDecl *)stmt);
-      // 移除常量声明
       break;
     }
     case AST_VAR_DECL: {
-      AstVarDecl *var_decl = (AstVarDecl *)stmt;
-      AstVarDef *def = var_decl->def;
-      while (def) {
-        if (def->exp) {
-          def->exp = optimize_exp(def->exp);
-        }
-        def = def->next;
-      }
-      tail->next = stmt;
-      tail = stmt;
+      optimize_var_decl((AstVarDecl *)stmt);
       break;
     }
     case AST_EMPTY_STMT:
@@ -407,8 +458,6 @@ void optimize_block(AstBlock *block) {
       break;
     default:
       optimize_stmt(stmt);
-      tail->next = stmt;
-      tail = stmt;
       break;
     }
     if (stmt->type == AST_RETURN_STMT) {
@@ -419,7 +468,6 @@ void optimize_block(AstBlock *block) {
     stmt = stmt->next;
   }
   leave_scope();
-  block->stmt = head.next;
 }
 
 // 优化 AST，工作包括：
@@ -452,9 +500,9 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
   // 重置符号表
   reset_symbol_table();
 
-  printf("    === 优化后的 AST ===\n");
-  comp_unit->base.dump((AstBase *)comp_unit, 4);
-  printf("\n");
+  // printf("    === 优化后的 AST ===\n");
+  // comp_unit->base.dump((AstBase *)comp_unit, 4);
+  // printf("\n");
 }
 // #endregion
 
@@ -700,6 +748,19 @@ static void codegen_func_call(AstFuncCall *func_call) {
   free(signs);
 }
 
+static void codegen_array_access(AstArrayAccess *array_access) {
+  Symbol *symbol = find_symbol(array_access->name);
+  if (symbol == NULL) {
+    fatalf("访问未定义的数组变量 %s\n", array_access->name);
+  }
+  const char *name = symbol_unique_name(symbol);
+  codegen_exp(array_access->index);
+  outputf("%%_ptr%d = getelemptr %s, %s\n", temp_sign_index, name,
+          exp_sign(array_access->index));
+  outputf("  %%%d = load %%_ptr%d\n", temp_sign_index, temp_sign_index);
+  temp_sign_index++;
+}
+
 static void codegen_exp(AstExp *exp) {
   switch (exp->type) {
   case AST_UNARY_EXP: {
@@ -738,6 +799,9 @@ static void codegen_exp(AstExp *exp) {
     break;
   case AST_FUNC_CALL:
     codegen_func_call((AstFuncCall *)exp);
+    break;
+  case AST_ARRAY_ACCESS:
+    codegen_array_access((AstArrayAccess *)exp);
     break;
   default:
     fprintf(stderr, "未知的表达式类型 %s\n", ast_type_to_string(exp->type));
@@ -780,10 +844,35 @@ static void codegen_var_decl(AstVarDecl *decl) {
   while (def) {
     Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
-    outputf("  %s = alloc i32\n", name);
-    if (def->exp) {
-      codegen_exp(def->exp);
-      outputf("  store %s, %s\n", exp_sign(def->exp), name);
+    if (def->array_size) {
+      int size = ((AstNumber *)def->array_size)->number;
+      outputf("  %s = alloc [i32, %d]\n", name, size);
+
+      int value_count = 0;
+      if (def->val) {
+        AstArrayValue *array_value = (AstArrayValue *)def->val;
+        value_count = array_value->count;
+        for (int i = 0; i < value_count; i++) {
+          AstExp *v = array_value->elements[i];
+          codegen_exp(v);
+          const char *v_sign = exp_sign(v);
+          outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
+          outputf("  store %s, %%%d\n", v_sign, temp_sign_index);
+          temp_sign_index++;
+        }
+      }
+      // 没有初始化值的元素补 0
+      for (int i = value_count; i < size; i++) {
+        outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
+        outputf("  store 0, %%%d\n", temp_sign_index);
+        temp_sign_index++;
+      }
+    } else {
+      outputf("  %s = alloc i32\n", name);
+      if (def->val) {
+        codegen_exp(def->val);
+        outputf("  store %s, %s\n", exp_sign(def->val), name);
+      }
     }
     free((void *)name);
     def = def->next;
@@ -886,8 +975,7 @@ static void codegen_stmt(AstStmt *stmt) {
     codegen_assign_stmt((AstAssignStmt *)stmt);
     break;
   case AST_CONST_DECL:
-    // 常量声明在优化阶段已经处理了
-    fatalf("不应该出现常量声明\n");
+    // nothing to do
     break;
   case AST_VAR_DECL:
     codegen_var_decl((AstVarDecl *)stmt);
@@ -920,13 +1008,41 @@ static void codegen_global_var_decl(AstVarDecl *decl) {
   while (def) {
     Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
-    outputf("global %s = alloc i32, ", name);
-    if (def->exp) {
-      outputf("%d\n", ((AstNumber *)def->exp)->number);
+    outputf("global %s = alloc ", name);
+    if (def->array_size) {
+      outputf("[i32, %d], ", ((AstNumber *)def->array_size)->number);
+    } else {
+      outputf("i32, ");
+    }
+    if (def->val) {
+      outputf("%d\n", ((AstNumber *)def->val)->number);
     } else {
       outputf("zeroinit\n");
     }
     free((void *)name);
+    def = def->next;
+  }
+}
+
+static void codegen_global_const_decl(AstConstDecl *decl) {
+  AstConstDef *def = decl->def;
+  while (def) {
+    if (def->array_size) {
+      Symbol *symbol = new_symbol(def->name, SymbolType_array);
+      symbol->is_const_value = true;
+      const char *name = symbol_unique_name(symbol);
+      int size = ((AstNumber *)def->array_size)->number;
+      outputf("global @%s = alloc [i32 %d], {", name, size);
+      if (def->val->type != AST_ARRAY_VALUE) {
+        fatalf("常量数组的值必须是数组\n");
+      }
+      AstArrayValue *array_value = (AstArrayValue *)def->val;
+      for (int i = 0; i < array_value->count; i++) {
+        outputf("%d%s", ((AstNumber *)array_value->elements[i])->number,
+                (i == array_value->count - 1) ? "" : ", ");
+      }
+      outputf("}\n");
+    }
     def = def->next;
   }
 }
@@ -951,37 +1067,6 @@ static void codegen_func_def(AstFuncDef *func_def) {
   }
   outputf("{\n");
 
-  // if (func_def->func_type == BType_VOID) {
-  //   if (func_def->param_count == 0) {
-  //     outputf("fun @%s() {\n", func_def->ident->name);
-  //   } else {
-  //     outputf("fun @%s(", func_def->ident->name);
-  //     FuncParam *param = func_def->params;
-  //     while (param) {
-  //       outputf("@%s: i32", param->ident->name);
-  //       param = param->next;
-  //       if (param) {
-  //         outputf(", ");
-  //       }
-  //     }
-  //     outputf(") {\n");
-  //   }
-  // } else {
-  //   if (func_def->param_count == 0) {
-  //     outputf("fun @%s(): i32 {\n", func_def->ident->name);
-  //   } else {
-  //     outputf("fun @%s(", func_def->ident->name);
-  //     FuncParam *param = func_def->params;
-  //     while (param) {
-  //       outputf("@%s: i32", param->ident->name);
-  //       param = param->next;
-  //       if (param) {
-  //         outputf(", ");
-  //       }
-  //     }
-  //     outputf("): i32 {\n");
-  //   }
-  // }
   outputf("%%entry:\n");
 
   enter_scope();
@@ -1018,7 +1103,7 @@ static void codegen_comp_unit(AstCompUnit *comp_unit) {
     } else if (comp_unit->defs[i]->type == AST_VAR_DECL) {
       codegen_global_var_decl((AstVarDecl *)comp_unit->defs[i]);
     } else if (comp_unit->defs[i]->type == AST_CONST_DECL) {
-      // 常量声明在优化阶段已经处理了
+      codegen_global_const_decl((AstConstDecl *)comp_unit->defs[i]);
     } else {
       fatalf("未知的定义类型\n");
     }
