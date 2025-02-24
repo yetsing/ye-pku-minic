@@ -51,5 +51,5 @@ fi
 docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
     autotest -koopa -s lv9 /root/compiler
 
-# docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
-# autotest -riscv -s lv9 /root/compiler
+docker run -it --rm -v .:/root/compiler maxxing/compiler-dev \
+    autotest -riscv -s lv9 /root/compiler

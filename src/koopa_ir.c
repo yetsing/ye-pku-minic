@@ -755,9 +755,9 @@ static void codegen_array_access(AstArrayAccess *array_access) {
   }
   const char *name = symbol_unique_name(symbol);
   codegen_exp(array_access->index);
-  outputf("%%_ptr%d = getelemptr %s, %s\n", temp_sign_index, name,
+  outputf("  %%ptr_%d = getelemptr %s, %s\n", temp_sign_index, name,
           exp_sign(array_access->index));
-  outputf("  %%%d = load %%_ptr%d\n", temp_sign_index, temp_sign_index);
+  outputf("  %%%d = load %%ptr_%d\n", temp_sign_index, temp_sign_index);
   temp_sign_index++;
 }
 
@@ -825,18 +825,38 @@ static void codegen_return_stmt(AstReturnStmt *stmt) {
 }
 
 static void codegen_assign_stmt(AstAssignStmt *stmt) {
-  if (stmt->lhs->type != AST_IDENTIFIER) {
-    fatalf("左值必须是标识符\n");
+  if (stmt->lhs->type == AST_IDENTIFIER) {
+    AstIdentifier *ident = (AstIdentifier *)stmt->lhs;
+    Symbol *symbol = find_symbol(ident->name);
+    if (symbol == NULL) {
+      fatalf("赋值未定义的符号 %s\n", ident->name);
+    }
+    codegen_exp(stmt->exp);
+    const char *name = symbol_unique_name(symbol);
+    outputf("  store %s, %s\n", exp_sign(stmt->exp), name);
+    free((void *)name);
+  } else if (stmt->lhs->type == AST_ARRAY_ACCESS) {
+    codegen_exp(stmt->exp);
+    const char *value_sign = exp_sign(stmt->exp);
+    AstArrayAccess *array_access = (AstArrayAccess *)stmt->lhs;
+    codegen_exp(array_access->index);
+    const char *index_sign = exp_sign(array_access->index);
+    Symbol *symbol = find_symbol(array_access->name);
+    if (symbol == NULL) {
+      fatalf("赋值未定义的数组变量 %s\n", array_access->name);
+    }
+    if (symbol->is_const_value) {
+      fatalf("不能给常量赋值 %s\n", array_access->name);
+    }
+    const char *name = symbol_unique_name(symbol);
+    outputf("  %%ptr_%d = getelemptr %s, %s\n", temp_sign_index, name,
+            index_sign);
+    outputf("  store %s, %%ptr_%d\n", value_sign, temp_sign_index);
+    temp_sign_index++;
+    free((void *)name);
+  } else {
+    fatalf("不支持的左值类型 %s\n", ast_type_to_string(stmt->lhs->type));
   }
-  AstIdentifier *ident = (AstIdentifier *)stmt->lhs;
-  Symbol *symbol = find_symbol(ident->name);
-  if (symbol == NULL) {
-    fatalf("赋值未定义的符号 %s\n", ident->name);
-  }
-  codegen_exp(stmt->exp);
-  const char *name = symbol_unique_name(symbol);
-  outputf("  store %s, %s\n", exp_sign(stmt->exp), name);
-  free((void *)name);
 }
 
 static void codegen_var_decl(AstVarDecl *decl) {
@@ -875,6 +895,40 @@ static void codegen_var_decl(AstVarDecl *decl) {
       }
     }
     free((void *)name);
+    def = def->next;
+  }
+}
+
+static void codegen_const_decl(AstConstDecl *decl) {
+  AstConstDef *def = decl->def;
+  while (def) {
+    if (def->array_size) {
+      Symbol *symbol = new_symbol(def->name, SymbolType_array);
+      const char *name = symbol_unique_name(symbol);
+      int size = ((AstNumber *)def->array_size)->number;
+      outputf("  %s = alloc [i32, %d]\n", name, size);
+
+      int value_count = 0;
+      if (def->val) {
+        AstArrayValue *array_value = (AstArrayValue *)def->val;
+        value_count = array_value->count;
+        for (int i = 0; i < value_count; i++) {
+          AstExp *v = array_value->elements[i];
+          codegen_exp(v);
+          const char *v_sign = exp_sign(v);
+          outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
+          outputf("  store %s, %%%d\n", v_sign, temp_sign_index);
+          temp_sign_index++;
+        }
+      }
+      // 没有初始化值的元素补 0
+      for (int i = value_count; i < size; i++) {
+        outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
+        outputf("  store 0, %%%d\n", temp_sign_index);
+        temp_sign_index++;
+      }
+      free((void *)name);
+    }
     def = def->next;
   }
 }
@@ -975,7 +1029,7 @@ static void codegen_stmt(AstStmt *stmt) {
     codegen_assign_stmt((AstAssignStmt *)stmt);
     break;
   case AST_CONST_DECL:
-    // nothing to do
+    codegen_const_decl((AstConstDecl *)stmt);
     break;
   case AST_VAR_DECL:
     codegen_var_decl((AstVarDecl *)stmt);
@@ -1032,7 +1086,7 @@ static void codegen_global_const_decl(AstConstDecl *decl) {
       symbol->is_const_value = true;
       const char *name = symbol_unique_name(symbol);
       int size = ((AstNumber *)def->array_size)->number;
-      outputf("global @%s = alloc [i32 %d], {", name, size);
+      outputf("global %s = alloc [i32, %d], {", name, size);
       if (def->val->type != AST_ARRAY_VALUE) {
         fatalf("常量数组的值必须是数组\n");
       }

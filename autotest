@@ -479,6 +479,10 @@ if __name__ == '__main__':
   parser.add_argument('-s', '--sub_dir',
                       default=None,
                       help='run testcases in the specific sub directory')
+  parser.add_argument('-i', '--test_index',
+                      default=None,
+                      action='store', type=int,
+                      help='run the specific test case')
   parser.add_argument('repo_dir', type=str,
                       help='compiler repository directory')
 
@@ -501,6 +505,8 @@ if __name__ == '__main__':
     eprint(f'failed to compile the repository "{args.repo_dir}"')
     sys.exit(-1)
 
+  if args.test_index is not None:
+    cases = [cases[args.test_index]]
   # run test
   try:
     run_tests(args.mode, compiler, cases)

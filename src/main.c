@@ -74,9 +74,9 @@ int main(int argc, char *argv[]) {
   // printf("%s\n", input);
   AstCompUnit *comp_unit = parse(input);
   if (target == CODEGEN_TARGET_RISCV) {
-    // printf("=== Koopa IR codegen result ===\n");
     koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
+    // printf("=== Koopa IR codegen result ===\n");
     // printf("%s\n", ir);
     riscv_codegen(ir, output_file);
     free((void *)ir);
