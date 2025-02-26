@@ -172,7 +172,7 @@ static AstArrayValue *parse_array_value(void) {
   return array_value;
 }
 
-// PrimaryExp  ::= "(" Exp ")" | LVal | Number;
+// PrimaryExp  ::= "(" Exp ")" | LVal | Number | ArrayVal;
 static AstExp *parse_primary_exp(void) {
   switch (parser.current.type) {
   case TOKEN_IDENTIFIER:
@@ -184,6 +184,8 @@ static AstExp *parse_primary_exp(void) {
     AstExp *exp = parse_exp();
     consume(TOKEN_RPAREN);
     return exp;
+  case TOKEN_LBRACE:
+    return (AstExp *)parse_array_value();
   default:
     fprintf(stderr, "Syntax error: unexpected token %d at line %d\n",
             parser.current.type, parser.current.line);
@@ -325,15 +327,18 @@ static AstStmt *parse_return_stmt(void) {
   return (AstStmt *)stmt;
 }
 
-// LVal              ::= IDENT ("[" Exp "]")?;
+// LVal              ::= IDENT ("[" Exp "]")*;
 static AstExp *parse_lval(void) {
   if (peek_is(TOKEN_LBRACKET)) {
     AstArrayAccess *array_access = new_ast_array_access();
     array_access->name = strndup(parser.current.start, parser.current.length);
     consume(TOKEN_IDENTIFIER);
-    consume(TOKEN_LBRACKET);
-    array_access->index = parse_exp();
-    consume(TOKEN_RBRACKET);
+    while (current_is(TOKEN_LBRACKET)) {
+      advance();
+      AstExp *exp = parse_exp();
+      exp_array_add(&array_access->indexes, exp);
+      consume(TOKEN_RBRACKET);
+    }
     return (AstExp *)array_access;
   }
   return (AstExp *)parse_identifier();
@@ -357,16 +362,17 @@ static AstIdentifier *parse_identifier(void) {
   return ident;
 }
 
-// ConstDef    ::= IDENT ("[" ConstExp "]")? "=" ConstInitVal;
+// ConstDef    ::= IDENT ("[" ConstExp "]")* "=" ConstInitVal;
 // ConstInitVal::= ConstExp | ArrayVal;
 // ConstExp    ::= Exp;
 static AstConstDef *parse_const_def(void) {
   AstConstDef *def = new_ast_const_def();
   def->name = strndup(parser.current.start, parser.current.length);
   consume(TOKEN_IDENTIFIER);
-  if (current_is(TOKEN_LBRACKET)) {
+  while (current_is(TOKEN_LBRACKET)) {
     advance();
-    def->array_size = parse_exp();
+    AstExp *exp = parse_exp();
+    exp_array_add(&def->dimensions, exp);
     consume(TOKEN_RBRACKET);
   }
   match("=");
@@ -395,16 +401,17 @@ static AstConstDecl *parse_const_decl(void) {
   return const_decl;
 }
 
-// VarDef        ::= IDENT ("[" ConstExp "]")?
-//                 | IDENT ("[" ConstExp "]")? "=" InitVal;
+// VarDef        ::= IDENT ("[" ConstExp "]")*
+//                 | IDENT ("[" ConstExp "]")* "=" InitVal;
 // InitVal       ::= Exp | "{" (Exp ("," Exp)*)? "}";
 static AstVarDef *parse_var_def(void) {
   AstVarDef *def = new_ast_var_def();
   def->name = strndup(parser.current.start, parser.current.length);
   consume(TOKEN_IDENTIFIER);
-  if (current_is(TOKEN_LBRACKET)) {
+  while (current_is(TOKEN_LBRACKET)) {
     advance();
-    def->array_size = parse_exp();
+    AstExp *exp = parse_exp();
+    exp_array_add(&def->dimensions, exp);
     consume(TOKEN_RBRACKET);
   }
   if (try_consume(TOKEN_ASSIGN)) {

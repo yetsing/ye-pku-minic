@@ -70,6 +70,14 @@ typedef struct {
 } AstExp;
 
 typedef struct {
+  AstExp **elements;
+  int count;
+  int capacity;
+} ExpArray;
+void init_exp_array(ExpArray *array);
+void exp_array_add(ExpArray *array, AstExp *element);
+
+typedef struct {
   AstExp base;
   int number;
 } AstNumber;
@@ -82,6 +90,7 @@ typedef struct {
   int capacity;
 } AstArrayValue;
 AstArrayValue *new_ast_array_value();
+AstArrayValue *new_ast_array_value2(int count, int capacity);
 void ast_array_value_add(AstArrayValue *array_value, AstExp *element);
 
 typedef struct {
@@ -93,7 +102,7 @@ AstIdentifier *new_ast_identifier();
 typedef struct {
   AstExp base;
   const char *name;
-  AstExp *index;
+  ExpArray indexes;
 } AstArrayAccess;
 AstArrayAccess *new_ast_array_access();
 
@@ -182,7 +191,7 @@ typedef struct AstConstDef AstConstDef;
 typedef struct AstConstDef {
   AstBase base;
   const char *name;
-  AstExp *array_size;
+  ExpArray dimensions;
   AstExp *val;
   AstConstDef *next; // 使用链表结构存储多个常量定义
 } AstConstDef;
@@ -199,7 +208,7 @@ typedef struct AstVarDef AstVarDef;
 typedef struct AstVarDef {
   AstBase base;
   const char *name;
-  AstExp *array_size;
+  ExpArray dimensions;
   AstExp *val;
   AstVarDef *next;
 } AstVarDef;
