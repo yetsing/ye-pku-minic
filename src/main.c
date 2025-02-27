@@ -85,12 +85,12 @@ int main(int argc, char *argv[]) {
     // printf("%s\n", riscv);
     free((void *)riscv);
   } else if (target == CODEGEN_TARGET_KOOPA) {
-    printf("=== AST dump ===\n");
-    comp_unit->base.dump((AstBase *)comp_unit, 0);
-    // printf("=== Koopa IR codegen result ===\n");
+    // printf("=== AST dump ===\n");
+    // comp_unit->base.dump((AstBase *)comp_unit, 0);
     koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
-    // printf("%s\n", ir);
+    printf("=== Koopa IR codegen result ===\n");
+    printf("%s\n", ir);
     free((void *)ir);
   } else {
     fprintf(stderr, "未指定目标\n");
