@@ -67,6 +67,8 @@ const char *btype_to_string(BType type) {
     return "void";
   case BType_POINTER:
     return "pointer";
+  case BType_ARRAY_POINTER:
+    return "array_pointer";
   }
   fatalf("Invalid BType: %d\n", type);
   return "";
@@ -392,13 +394,13 @@ AstReturnStmt *new_ast_return_stmt() {
 
 void ast_assign_stmt_dump(AstAssignStmt *node, int indent) {
   printf("AssignStmt: {\n");
-  printf("%*s  lhs: ", indent, " ");
+  printf("%*s  lhs: ", indent, indent > 0 ? " " : "");
   node->lhs->dump((AstBase *)node->lhs, indent + 2);
   printf(",\n");
-  printf("%*s  exp: ", indent, " ");
+  printf("%*s  exp: ", indent, indent > 0 ? " " : "");
   node->exp->dump((AstBase *)node->exp, indent + 2);
   printf(",\n");
-  printf("%*s}", indent, " ");
+  printf("%*s}", indent, indent > 0 ? " " : "");
 }
 
 AstAssignStmt *new_ast_assign_stmt() {
@@ -554,6 +556,9 @@ void ast_func_def_dump(AstFuncDef *node, int indent) {
   FuncParam *param = node->params;
   while (param) {
     printf("%s %s", btype_to_string(param->type), param->ident->name);
+    if (param->dimensions.count > 0) {
+      printf("<%d>", param->dimensions.count);
+    }
     param = param->next;
     if (param) {
       printf(", ");

@@ -35,6 +35,7 @@ typedef enum {
   BType_INT,
   BType_VOID,
   BType_POINTER,
+  BType_ARRAY_POINTER,
 } BType;
 const char *btype_to_string(BType type);
 
@@ -231,6 +232,7 @@ typedef struct FuncParam FuncParam;
 typedef struct FuncParam {
   BType type;
   AstIdentifier *ident;
+  ExpArray dimensions;
   FuncParam *next;
 } FuncParam;
 

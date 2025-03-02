@@ -187,8 +187,9 @@ static AstExp *parse_primary_exp(void) {
   case TOKEN_LBRACE:
     return (AstExp *)parse_array_value();
   default:
-    fprintf(stderr, "Syntax error: unexpected token %d at line %d\n",
-            parser.current.type, parser.current.line);
+    fprintf(stderr, "Syntax error: unexpected token %s(%d) at line %d\n",
+            token_type_to_string(parser.current.type), parser.current.type,
+            parser.current.line);
     exit(1);
   }
 }
@@ -318,11 +319,13 @@ static AstExp *parse_lor_exp(void) {
 // Exp         ::= LOrExp;
 static AstExp *parse_exp(void) { return parse_lor_exp(); }
 
-// ReturnStmt        ::= "return" Exp ";";
+// ReturnStmt        ::= "return" [Exp] ";";
 static AstStmt *parse_return_stmt(void) {
   AstReturnStmt *stmt = new_ast_return_stmt();
   match("return");
-  stmt->exp = parse_exp();
+  if (!current_is(TOKEN_SEMICOLON)) {
+    stmt->exp = parse_exp();
+  }
   consume(TOKEN_SEMICOLON);
   return (AstStmt *)stmt;
 }
@@ -567,7 +570,7 @@ static AstBlock *parse_block(void) {
 
 // FuncDef   ::= FuncType IDENT "(" [FuncFParams] ")" Block;
 // FuncFParams ::= FuncFParam ("," FuncFParam)*;
-// FuncFParam  ::= "int" IDENT;
+// FuncFParam  ::= "int" IDENT ("[" "]" ("[" ConstExp "]")* )?;
 static AstFuncDef *parse_func_def(void) {
   AstFuncDef *func_def = new_ast_func_def();
   func_def->func_type = parse_func_type();
@@ -581,6 +584,21 @@ static AstFuncDef *parse_func_def(void) {
       FuncParam *param = calloc(1, sizeof(FuncParam));
       param->type = parse_func_type();
       param->ident = parse_identifier();
+      init_exp_array(&param->dimensions);
+      if (current_is(TOKEN_LBRACKET)) {
+        param->type = BType_POINTER;
+        advance();
+        consume(TOKEN_RBRACKET);
+        while (current_is(TOKEN_LBRACKET)) {
+          advance();
+          AstExp *exp = parse_exp();
+          exp_array_add(&param->dimensions, exp);
+          consume(TOKEN_RBRACKET);
+        }
+        if (param->dimensions.count > 0) {
+          param->type = BType_ARRAY_POINTER;
+        }
+      }
       tail->next = param;
       tail = param;
       func_def->param_count++;

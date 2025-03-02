@@ -23,8 +23,11 @@ int while_body_index = 0;
 IntStack while_stack;
 // 逻辑运算（ && || ）计数，用来生成唯一的标签
 int logic_index = 0;
+// 用来判断是否生成 ret 指令，没有需要在末尾补上
 bool output_ret_inst = false;
-// 当前正在处理的函数
+// ptr 计数
+int ptr_index = 0;
+// codegen 当前正在处理的函数
 AstFuncDef *current_func_def = NULL;
 
 static bool starts_with(const char *str, const char *prefix) {
@@ -48,6 +51,8 @@ typedef enum {
   SymbolType_int,
   SymbolType_func,
   SymbolType_array,
+  SymbolType_pointer,
+  SymbolType_array_pointer,
 } SymbolType;
 
 typedef struct {
@@ -195,19 +200,18 @@ bool is_const_exp(AstExp *exp) {
 }
 
 int eval_array_value(AstArrayValue *array_value) {
-  AstExp **new_elements = malloc(sizeof(AstExp *) * array_value->count);
+  AstExp **elements = array_value->elements;
   for (int i = 0; i < array_value->count; i++) {
-    if (array_value->elements[i]->type == AST_ARRAY_VALUE) {
-      eval_const_exp(array_value->elements[i]);
-      new_elements[i] = array_value->elements[i];
+    if (elements[i]->type == AST_ARRAY_VALUE) {
+      eval_const_exp(elements[i]);
+    } else if (elements[i]->type == AST_NUMBER) {
     } else {
-      int val = eval_const_exp(array_value->elements[i]);
+      int val = eval_const_exp(elements[i]);
       AstNumber *number = new_ast_number();
       number->number = val;
-      new_elements[i] = (AstExp *)number;
+      elements[i] = (AstExp *)number;
     }
   }
-  array_value->elements = new_elements;
   return -1;
 }
 
@@ -369,23 +373,23 @@ void print_int_array(const char *prefix, int coordinates[], int n) {
  * @param result 一维数组
 
 */
-void do_flatten(int dimensions[], int count, AstArrayValue *val,
+void do_flatten(int dimensions[], int dimension_count, AstArrayValue *val,
                 int coordinates[], int current, ExpArray *result) {
   assert(current > 0);
   // printf("%*sdo_flatten current: %d\n", 2 * (count - current), " ", current);
   for (int i = 0; i < val->count; i++) {
     // print_int_array("coordinates", coordinates, count);
     if (val->elements[i]->type == AST_ARRAY_VALUE) {
-      assert(coordinates[count - 1] == 0);
-      int origin = coordinates[count - current];
-      do_flatten(dimensions, count, (AstArrayValue *)val->elements[i],
+      assert(coordinates[dimension_count - 1] == 0);
+      int origin = coordinates[dimension_count - current];
+      do_flatten(dimensions, dimension_count, (AstArrayValue *)val->elements[i],
                  coordinates, current - 1, result);
       // 碰到数组，对应维度进一，低维度需要全部置为 0
       // 这里不直接加 1 的原因：
       //    如果数组里面是全满的，就会发生进位，直接加 1 有问题；
       //    所以使用原始值加 1
-      coordinates[count - current] = origin + 1;
-      for (int i = count - current + 1; i < count; i++) {
+      coordinates[dimension_count - current] = origin + 1;
+      for (int i = dimension_count - current + 1; i < dimension_count; i++) {
         coordinates[i] = 0;
       }
     } else {
@@ -393,9 +397,9 @@ void do_flatten(int dimensions[], int count, AstArrayValue *val,
       current = 1;
 
       int index = 0;
-      for (int i = 0; i < count; i++) {
+      for (int i = 0; i < dimension_count; i++) {
         int n = coordinates[i];
-        for (int j = i + 1; j < count; j++) {
+        for (int j = i + 1; j < dimension_count; j++) {
           n *= dimensions[j];
         }
         index += n;
@@ -404,14 +408,14 @@ void do_flatten(int dimensions[], int count, AstArrayValue *val,
       // val->elements[i]->dump((AstBase *)val->elements[i], 0);
       // printf(">\n");
       result->elements[index] = val->elements[i];
-      coordinates[count - 1]++;
+      coordinates[dimension_count - 1]++;
 
       // 坐标进位，同时更新下一个括号的维度
-      for (int i = count - 1; i > 0; i--) {
+      for (int i = dimension_count - 1; i > 0; i--) {
         if (coordinates[i] == dimensions[i]) {
           coordinates[i] = 0;
           coordinates[i - 1]++;
-          current = count - i + 1;
+          current = dimension_count - i + 1;
         } else {
           break;
         }
@@ -423,17 +427,24 @@ void do_flatten(int dimensions[], int count, AstArrayValue *val,
 }
 
 // 比如声明是 int a[1][2][3] ，dimensions 就是 [1, 2, 3]
-AstExp *flatten_multi_dimension_array(int dimensions[], int count,
+AstExp *flatten_multi_dimension_array(int dimensions[], int dimension_count,
                                       AstExp *val) {
-  if (count == 1) {
+  assert(val->type == AST_ARRAY_VALUE);
+  if (dimension_count == 1) {
+    AstArrayValue *array_value = (AstArrayValue *)val;
+    // 补全默认值
+    for (int i = array_value->count; i < dimensions[0]; i++) {
+      AstNumber *number = new_ast_number();
+      number->number = 0;
+      ast_array_value_add(array_value, (AstExp *)number);
+    }
     return val;
   }
-  assert(val->type == AST_ARRAY_VALUE);
   // print_int_array("dimensions", dimensions, count);
   // printf("flatten_multi_dimension_array length: %d\n",
   //  ((AstArrayValue *)val)->count);
   int total_count = 1;
-  for (int i = 0; i < count; i++) {
+  for (int i = 0; i < dimension_count; i++) {
     total_count *= dimensions[i];
   }
   // printf("total_count: %d\n", total_count);
@@ -450,8 +461,8 @@ AstExp *flatten_multi_dimension_array(int dimensions[], int count,
 
   int *coordinates = malloc(sizeof(int) * total_count);
   memset(coordinates, 0, sizeof(int) * total_count);
-  do_flatten(dimensions, count, (AstArrayValue *)val, coordinates, count,
-             &result);
+  do_flatten(dimensions, dimension_count, (AstArrayValue *)val, coordinates,
+             dimension_count, &result);
 
   AstArrayValue *array_value = new_ast_array_value();
   array_value->count = total_count;
@@ -491,23 +502,22 @@ void optimize_var_decl(AstVarDecl *decl) {
   AstVarDef *def = decl->def;
   while (def) {
     if (def->dimensions.count > 0) {
+      int dimensions[def->dimensions.count];
       for (int i = 0; i < def->dimensions.count; i++) {
         int n = eval_const_exp(def->dimensions.elements[i]);
         assert(n > 0);
         AstNumber *number = new_ast_number();
         number->number = n;
         def->dimensions.elements[i] = (AstExp *)number;
+        dimensions[i] = n;
       }
-    }
-    if (def->val) {
-      def->val = optimize_exp(def->val);
-      if (def->dimensions.count > 0) {
-        int dimensions[def->dimensions.count];
-        for (int i = 0; i < def->dimensions.count; i++) {
-          dimensions[i] = ((AstNumber *)def->dimensions.elements[i])->number;
-        }
+      if (def->val) {
         def->val = flatten_multi_dimension_array(
             dimensions, def->dimensions.count, def->val);
+      }
+    } else {
+      if (def->val) {
+        def->val = optimize_exp(def->val);
       }
     }
     def = def->next;
@@ -549,7 +559,9 @@ void optimize_stmt(AstStmt *stmt) {
   switch (stmt->type) {
   case AST_RETURN_STMT: {
     AstReturnStmt *return_stmt = (AstReturnStmt *)stmt;
-    return_stmt->exp = optimize_exp(return_stmt->exp);
+    if (return_stmt->exp) {
+      return_stmt->exp = optimize_exp(return_stmt->exp);
+    }
     break;
   }
   case AST_EXP_STMT: {
@@ -623,18 +635,38 @@ void optimize_block(AstBlock *block) {
   leave_scope();
 }
 
+void optimize_func_def(AstFuncDef *func_def) {
+  FuncParam *param = func_def->params;
+  while (param) {
+    if (param->dimensions.count > 0) {
+      for (int i = 0; i < param->dimensions.count; i++) {
+        int n = eval_const_exp(param->dimensions.elements[i]);
+        assert(n > 0);
+        AstNumber *number = new_ast_number();
+        number->number = n;
+        param->dimensions.elements[i] = (AstExp *)number;
+      }
+    }
+    param = param->next;
+  }
+  optimize_block(func_def->block);
+}
+
 // 优化 AST，工作包括：
 //  - 移除一元加法表达式
 //  - 数字计算，例如 1 + 2 -> 3
 //  - 常量替换，例如 const a = 1; const b = a + 2; -> const a = 1; const b = 3;
+//  - 多维数组初始化值展开
+//  - 数组参数第二维度及以上的维度计算
+//  - 移除 return 之后的语句
+//  - 补全数组默认值
 void optimize_comp_unit(AstCompUnit *comp_unit) {
   for (int i = 0; i < comp_unit->count; i++) {
     AstBase *def = comp_unit->defs[i];
     switch (def->type) {
 
     case AST_FUNC_DEF: {
-      AstFuncDef *func_def = (AstFuncDef *)def;
-      optimize_block(func_def->block);
+      optimize_func_def((AstFuncDef *)def);
       break;
     }
     case AST_CONST_DECL: {
@@ -660,7 +692,8 @@ void optimize_comp_unit(AstCompUnit *comp_unit) {
 // #endregion
 
 // #region 生成 IR
-
+static void codegen_array_init_value(int *dimension, int dimension_count,
+                                     AstArrayValue *value);
 static void codegen_exp(AstExp *exp);
 static void codegen_block(AstBlock *block);
 static void codegen_stmt(AstStmt *stmt);
@@ -684,10 +717,26 @@ static void codegen_identifier(AstIdentifier *ident) {
   if (symbol == NULL) {
     fatalf("访问未定义的符号 %s\n", ident->name);
   }
-  const char *name = symbol_unique_name(symbol);
-  outputf("  %%%d = load %s\n", temp_sign_index, name);
-  free((void *)name);
-  temp_sign_index++;
+  if (symbol->type == SymbolType_int) {
+    const char *name = symbol_unique_name(symbol);
+    outputf("  %%%d = load %s\n", temp_sign_index, name);
+    free((void *)name);
+    temp_sign_index++;
+  } else if (symbol->type == SymbolType_array) {
+    // 数组的第一个元素的地址
+    const char *name = symbol_unique_name(symbol);
+    outputf("  %%%d = getelemptr %s, 0\n", temp_sign_index, name);
+    free((void *)name);
+    temp_sign_index++;
+  } else if (symbol->type == SymbolType_pointer ||
+             symbol->type == SymbolType_array_pointer) {
+    const char *name = symbol_unique_name(symbol);
+    outputf("  %%%d = load %s\n", temp_sign_index, name);
+    free((void *)name);
+    temp_sign_index++;
+  } else {
+    fatalf("未知的符号类型\n");
+  }
 }
 
 static void codegen_binary_exp(AstBinaryExp *exp) {
@@ -906,47 +955,77 @@ static void codegen_array_access(AstArrayAccess *array_access) {
   if (symbol == NULL) {
     fatalf("访问未定义的数组变量 %s\n", array_access->name);
   }
-  if (symbol->type != SymbolType_array) {
+  if (symbol->type == SymbolType_array) {
+    assert(array_access->indexes.count <= symbol->dimension_count);
+    const char *name = symbol_unique_name(symbol);
+    char **index_signs = malloc(sizeof(char *) * array_access->indexes.count);
+    for (int i = 0; i < array_access->indexes.count; i++) {
+      codegen_exp(array_access->indexes.elements[i]);
+      index_signs[i] = exp_sign(array_access->indexes.elements[i]);
+    }
+    for (int i = 0; i < array_access->indexes.count; i++) {
+      if (i == 0) {
+        outputf("  %%%d = getelemptr %s, %s\n", temp_sign_index, name,
+                index_signs[i]);
+      } else {
+        outputf("  %%%d = getelemptr %%%d, %s\n", temp_sign_index,
+                temp_sign_index - 1, index_signs[i]);
+      }
+      temp_sign_index++;
+    }
+    if (array_access->indexes.count == symbol->dimension_count) {
+      // 索引到最后一维，是取值，需要 load 一次
+      outputf("  %%%d = load %%%d\n", temp_sign_index, temp_sign_index - 1);
+      temp_sign_index++;
+    } else {
+      outputf("  %%%d = getelemptr %%%d, 0\n", temp_sign_index,
+              temp_sign_index - 1);
+      temp_sign_index++;
+    }
+  } else if (symbol->type == SymbolType_pointer) {
+    assert(array_access->indexes.count == 1);
+    codegen_exp(array_access->indexes.elements[0]);
+    const char *index_sign = exp_sign(array_access->indexes.elements[0]);
+    const char *name = symbol_unique_name(symbol);
+    outputf("  %%%d = load %s\n", temp_sign_index, name);
+    temp_sign_index++;
+    outputf("  %%%d = getptr %%%d, %s\n", temp_sign_index, temp_sign_index - 1,
+            index_sign);
+    temp_sign_index++;
+    outputf("  %%%d = load %%%d\n", temp_sign_index, temp_sign_index - 1);
+    temp_sign_index++;
+  } else if (symbol->type == SymbolType_array_pointer) {
+    assert(array_access->indexes.count <= symbol->dimension_count + 1);
+    const char *name = symbol_unique_name(symbol);
+    char **index_signs = malloc(sizeof(char *) * array_access->indexes.count);
+    for (int i = 0; i < array_access->indexes.count; i++) {
+      codegen_exp(array_access->indexes.elements[i]);
+      index_signs[i] = exp_sign(array_access->indexes.elements[i]);
+    }
+    // name 是 array** ，load 一次得到 array*
+    outputf("  %%%d = load %s\n", temp_sign_index, name);
+    temp_sign_index++;
+    outputf("  %%%d = getptr %%%d, %s\n", temp_sign_index, temp_sign_index - 1,
+            index_signs[0]);
+    temp_sign_index++;
+    for (int i = 1; i < array_access->indexes.count; i++) {
+      outputf("  %%%d = getelemptr %%%d, %s\n", temp_sign_index,
+              temp_sign_index - 1, index_signs[i]);
+      temp_sign_index++;
+    }
+    if (array_access->indexes.count == symbol->dimension_count + 1) {
+      // 索引到最后一维，是取值，需要 load 一次
+      outputf("  %%%d = load %%%d\n", temp_sign_index, temp_sign_index - 1);
+      temp_sign_index++;
+    } else {
+      // 其他的需要返回数组第一个元素的指针
+      outputf("  %%%d = getelemptr %%%d, 0\n", temp_sign_index,
+              temp_sign_index - 1);
+      temp_sign_index++;
+    }
+  } else {
     fatalf("访问非数组变量 %s\n", array_access->name);
   }
-  const char *name = symbol_unique_name(symbol);
-  if (array_access->indexes.count == 1) {
-    codegen_exp(array_access->indexes.elements[0]);
-    outputf("  %%ptr_%d = getelemptr %s, %s\n", temp_sign_index, name,
-            exp_sign(array_access->indexes.elements[0]));
-    outputf("  %%%d = load %%ptr_%d\n", temp_sign_index, temp_sign_index);
-    temp_sign_index++;
-    return;
-  }
-
-  // 多维数组
-  int *steps = malloc(sizeof(int) * symbol->dimension_count);
-  steps[symbol->dimension_count - 1] = 1;
-  for (int i = symbol->dimension_count - 2; i >= 0; i--) {
-    steps[i] = steps[i + 1] * symbol->dimensions[i + 1];
-  }
-  int *indexes = malloc(sizeof(int) * array_access->indexes.count);
-  for (int i = 0; i < array_access->indexes.count; i++) {
-    codegen_exp(array_access->indexes.elements[i]);
-    outputf("  %%%d = mul %s, %d\n", temp_sign_index,
-            exp_sign(array_access->indexes.elements[i]),
-            steps[i + symbol->dimension_count - array_access->indexes.count]);
-    indexes[i] = temp_sign_index;
-    temp_sign_index++;
-  }
-  // 累加所有维度的索引
-  int result_index = indexes[0];
-  for (int i = 1; i < array_access->indexes.count; i++) {
-    outputf("  %%%d = add %%%d, %%%d\n", temp_sign_index, result_index,
-            indexes[i]);
-    result_index = temp_sign_index;
-    temp_sign_index++;
-  }
-  outputf("  %%ptr_%d = getelemptr %s, %%%d\n", temp_sign_index, name,
-          result_index);
-  outputf("  %%%d = load %%ptr_%d\n", temp_sign_index, temp_sign_index);
-  temp_sign_index++;
-  return;
 }
 
 static void codegen_exp(AstExp *exp) {
@@ -1006,7 +1085,7 @@ static void codegen_return_stmt(AstReturnStmt *stmt) {
     outputf("  ret %s\n", exp_sign(stmt->exp));
   } else {
     if (current_func_def->func_type != BType_VOID) {
-      warnf("非 void 函数没有 return 返回值\n");
+      fatalf("非 void 函数没有 return 返回值\n");
     }
     outputf("  ret\n");
   }
@@ -1027,9 +1106,6 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
     codegen_exp(stmt->exp);
     const char *value_sign = exp_sign(stmt->exp);
     AstArrayAccess *array_access = (AstArrayAccess *)stmt->lhs;
-    assert(array_access->indexes.count == 1);
-    codegen_exp(array_access->indexes.elements[0]);
-    const char *index_sign = exp_sign(array_access->indexes.elements[0]);
     Symbol *symbol = find_symbol(array_access->name);
     if (symbol == NULL) {
       fatalf("赋值未定义的数组变量 %s\n", array_access->name);
@@ -1037,12 +1113,62 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
     if (symbol->is_const_value) {
       fatalf("不能给常量赋值 %s\n", array_access->name);
     }
-    const char *name = symbol_unique_name(symbol);
-    outputf("  %%ptr_%d = getelemptr %s, %s\n", temp_sign_index, name,
-            index_sign);
-    outputf("  store %s, %%ptr_%d\n", value_sign, temp_sign_index);
-    temp_sign_index++;
-    free((void *)name);
+    if (symbol->type == SymbolType_array) {
+      assert(array_access->indexes.count == symbol->dimension_count);
+      const char *name = symbol_unique_name(symbol);
+      char **index_signs = malloc(sizeof(char *) * array_access->indexes.count);
+      for (int i = 0; i < array_access->indexes.count; i++) {
+        codegen_exp(array_access->indexes.elements[i]);
+        index_signs[i] = exp_sign(array_access->indexes.elements[i]);
+      }
+
+      for (int i = 0; i < array_access->indexes.count; i++) {
+        if (i == 0) {
+          outputf("  %%%d = getelemptr %s, %s\n", temp_sign_index, name,
+                  index_signs[i]);
+        } else {
+          outputf("  %%%d = getelemptr %%%d, %s\n", temp_sign_index,
+                  temp_sign_index - 1, index_signs[i]);
+        }
+        temp_sign_index++;
+      }
+      outputf("  store %s, %%%d\n", value_sign, temp_sign_index - 1);
+    } else if (symbol->type == SymbolType_pointer) {
+      assert(array_access->indexes.count == 1);
+      codegen_exp(array_access->indexes.elements[0]);
+      const char *index_sign = exp_sign(array_access->indexes.elements[0]);
+      const char *name = symbol_unique_name(symbol);
+      outputf("  %%%d = load %s\n", temp_sign_index, name);
+      temp_sign_index++;
+      outputf("  %%%d = getptr %%%d, %s\n", temp_sign_index,
+              temp_sign_index - 1, index_sign);
+      temp_sign_index++;
+      outputf("  store %s, %%%d\n", value_sign, temp_sign_index - 1);
+    } else if (symbol->type == SymbolType_array_pointer) {
+      assert(array_access->indexes.count == symbol->dimension_count + 1);
+      const char *name = symbol_unique_name(symbol);
+      char **index_signs = malloc(sizeof(char *) * array_access->indexes.count);
+      for (int i = 0; i < array_access->indexes.count; i++) {
+        codegen_exp(array_access->indexes.elements[i]);
+        index_signs[i] = exp_sign(array_access->indexes.elements[i]);
+      }
+
+      outputf("  %%%d = load %s\n", temp_sign_index, name);
+      temp_sign_index++;
+      outputf("  %%%d = getptr %%%d, %s\n", temp_sign_index,
+              temp_sign_index - 1, index_signs[0]);
+      temp_sign_index++;
+      for (int i = 1; i < array_access->indexes.count; i++) {
+        outputf("  %%%d = getelemptr %%%d, %s\n", temp_sign_index,
+                temp_sign_index - 1, index_signs[i]);
+        temp_sign_index++;
+      }
+      outputf("  store %s, %%%d\n", value_sign, temp_sign_index - 1);
+    } else {
+      stmt->base.dump((AstBase *)stmt, 0);
+      printf("\n");
+      fatalf("赋值非数组变量 %s\n", symbol->name);
+    }
   } else {
     fatalf("不支持的左值类型 %s\n", ast_type_to_string(stmt->lhs->type));
   }
@@ -1050,43 +1176,58 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
 
 static void codegen_var_decl(AstVarDecl *decl) {
   AstVarDef *def = decl->def;
+  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
   while (def) {
     Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
     if (def->dimensions.count > 0) {
+      int dimension_count = def->dimensions.count;
+      int *dimensions = malloc(sizeof(int) * dimension_count);
+      strcpy(type, "i32");
       int total_count = 1;
-      int *dimensions = malloc(sizeof(int) * def->dimensions.count);
-      for (int i = 0; i < def->dimensions.count; i++) {
+      for (int i = dimension_count - 1; i > -1; i--) {
         assert(def->dimensions.elements[i]->type == AST_NUMBER);
         int n = ((AstNumber *)def->dimensions.elements[i])->number;
-        total_count *= n;
+        assert(n > 0);
         dimensions[i] = n;
+        sprintf(temp_type, "[%s, %d]", type, n);
+        strcpy(type, temp_type);
+        total_count *= n;
       }
-      assert(total_count > 0);
       symbol->type = SymbolType_array;
       symbol->dimensions = dimensions;
-      symbol->dimension_count = def->dimensions.count;
-      outputf("  %s = alloc [i32, %d]\n", name, total_count);
+      symbol->dimension_count = dimension_count;
+      outputf("  %s = alloc %s\n", name, type);
 
-      int value_count = 0;
       if (def->val) {
         assert(def->val->type == AST_ARRAY_VALUE);
+        int *steps = malloc(dimension_count * sizeof(int));
+        steps[dimension_count - 1] = 1;
+        for (int i = dimension_count - 2; i >= 0; i--) {
+          steps[i] = steps[i + 1] * dimensions[i + 1];
+        }
         AstArrayValue *array_value = (AstArrayValue *)def->val;
-        value_count = array_value->count;
-        for (int i = 0; i < value_count; i++) {
+        assert(array_value->count == total_count);
+        for (int i = 0; i < array_value->count; i++) {
           AstExp *v = array_value->elements[i];
           codegen_exp(v);
           const char *v_sign = exp_sign(v);
-          outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
-          outputf("  store %s, %%%d\n", v_sign, temp_sign_index);
-          temp_sign_index++;
+          int remaining = i;
+          for (int j = 0; j < dimension_count; j++) {
+            int offset = remaining / steps[j];
+            remaining = remaining % steps[j];
+            if (j == 0) {
+              outputf("  %%ptr_%d = getelemptr %s, %d\n", ptr_index, name,
+                      offset);
+            } else {
+              outputf("  %%ptr_%d = getelemptr %%ptr_%d, %d\n", ptr_index,
+                      ptr_index - 1, offset);
+            }
+            ptr_index++;
+          }
+          outputf("  store %s, %%ptr_%d\n", v_sign, ptr_index - 1);
         }
-      }
-      // 没有初始化值的元素补 0
-      for (int i = value_count; i < total_count; i++) {
-        outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
-        outputf("  store 0, %%%d\n", temp_sign_index);
-        temp_sign_index++;
       }
     } else {
       outputf("  %s = alloc i32\n", name);
@@ -1098,46 +1239,62 @@ static void codegen_var_decl(AstVarDecl *decl) {
     free((void *)name);
     def = def->next;
   }
+  free(type);
+  free(temp_type);
 }
 
 static void codegen_const_decl(AstConstDecl *decl) {
   AstConstDef *def = decl->def;
+  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
   while (def) {
     if (def->dimensions.count > 0) {
+      int dimension_count = def->dimensions.count;
+      int *dimensions = malloc(sizeof(int) * dimension_count);
+      strcpy(type, "i32");
       int total_count = 1;
-      int *dimensions = malloc(sizeof(int) * def->dimensions.count);
-      for (int i = 0; i < def->dimensions.count; i++) {
+      for (int i = dimension_count - 1; i > -1; i--) {
         assert(def->dimensions.elements[i]->type == AST_NUMBER);
         int n = ((AstNumber *)def->dimensions.elements[i])->number;
-        total_count *= n;
+        assert(n > 0);
         dimensions[i] = n;
+        sprintf(temp_type, "[%s, %d]", type, n);
+        strcpy(type, temp_type);
+        total_count *= n;
       }
-      assert(total_count > 0);
       Symbol *symbol = new_symbol(def->name, SymbolType_array);
+      symbol->is_const_value = true;
       symbol->dimensions = dimensions;
-      symbol->dimension_count = def->dimensions.count;
+      symbol->dimension_count = dimension_count;
       const char *name = symbol_unique_name(symbol);
-      outputf("  %s = alloc [i32, %d]\n", name, total_count);
-
-      int value_count = 0;
-      if (def->val) {
-        assert(def->val->type == AST_ARRAY_VALUE);
-        AstArrayValue *array_value = (AstArrayValue *)def->val;
-        value_count = array_value->count;
-        for (int i = 0; i < value_count; i++) {
-          AstExp *v = array_value->elements[i];
-          codegen_exp(v);
-          const char *v_sign = exp_sign(v);
-          outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
-          outputf("  store %s, %%%d\n", v_sign, temp_sign_index);
-          temp_sign_index++;
-        }
+      outputf("  %s = alloc %s\n", name, type);
+      if (def->val == NULL || def->val->type != AST_ARRAY_VALUE) {
+        fatalf("常量数组的值必须是数组\n");
       }
-      // 没有初始化值的元素补 0
-      for (int i = value_count; i < total_count; i++) {
-        outputf("  %%%d = getelemptr %s, %d\n", temp_sign_index, name, i);
-        outputf("  store 0, %%%d\n", temp_sign_index);
-        temp_sign_index++;
+      int *steps = malloc(dimension_count * sizeof(int));
+      steps[dimension_count - 1] = 1;
+      for (int i = dimension_count - 2; i >= 0; i--) {
+        steps[i] = steps[i + 1] * dimensions[i + 1];
+      }
+      AstArrayValue *array_value = (AstArrayValue *)def->val;
+      assert(array_value->count == total_count);
+      for (int i = 0; i < array_value->count; i++) {
+        int remaining = i;
+        for (int j = 0; j < dimension_count; j++) {
+          int offset = remaining / steps[j];
+          remaining = remaining % steps[j];
+          if (j == 0) {
+            outputf("  %%ptr_%d = getelemptr %s, %d\n", ptr_index, name,
+                    offset);
+          } else {
+            outputf("  %%ptr_%d = getelemptr %%ptr_%d, %d\n", ptr_index,
+                    ptr_index - 1, offset);
+          }
+          ptr_index++;
+        }
+        assert(array_value->elements[i]->type == AST_NUMBER);
+        int n = ((AstNumber *)array_value->elements[i])->number;
+        outputf("  store %d, %%ptr_%d\n", n, ptr_index - 1);
       }
       free((void *)name);
     }
@@ -1269,44 +1426,92 @@ static void codegen_block(AstBlock *block) {
   }
   leave_scope();
 }
+
+static void codegen_array_init_value(int *dimension, int dimension_count,
+                                     AstArrayValue *value) {
+  assert(dimension_count > 0);
+  if (dimension_count == 1) {
+    int count = dimension[0];
+    outputf("{");
+    for (int i = 0; i < value->count; i++) {
+      assert(value->elements[i]->type == AST_NUMBER);
+      outputf("%d", ((AstNumber *)value->elements[i])->number);
+      if (i != count - 1) {
+        outputf(", ");
+      }
+    }
+    for (int i = value->count; i < count; i++) {
+      outputf("0");
+      if (i != count - 1) {
+        outputf(", ");
+      }
+    }
+    outputf("}");
+    return;
+  }
+  int *steps = malloc(sizeof(int) * dimension_count - 1);
+  steps[dimension_count - 1] = dimension[dimension_count - 1];
+  for (int i = dimension_count - 2; i >= 0; i--) {
+    steps[i] = steps[i + 1] * dimension[i];
+  }
+  for (int i = 0; i < value->count; i++) {
+    assert(value->elements[i]->type == AST_NUMBER);
+    bool left_brace = false;
+    for (int j = 0; j < dimension_count; j++) {
+      if ((i % steps[j]) == 0) {
+        left_brace = true;
+        outputf("{");
+      }
+    }
+    if (!left_brace) {
+      outputf(", ");
+    }
+    outputf("%d", ((AstNumber *)value->elements[i])->number);
+    bool right_brace = false;
+    for (int j = 0; j < dimension_count; j++) {
+      if (((i + 1) % steps[j]) == 0) {
+        right_brace = true;
+        outputf("}");
+      }
+    }
+    if (right_brace && i != value->count - 1) {
+      outputf(", ");
+    }
+  }
+}
+
 static void codegen_global_var_decl(AstVarDecl *decl) {
   AstVarDef *def = decl->def;
+  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
   while (def) {
     Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
-    outputf("global %s = alloc ", name);
     if (def->dimensions.count > 0) {
-      int total_count = 1;
       int *dimensions = malloc(sizeof(int) * def->dimensions.count);
-      for (int i = 0; i < def->dimensions.count; i++) {
+      strcpy(type, "i32");
+      for (int i = def->dimensions.count - 1; i > -1; i--) {
         assert(def->dimensions.elements[i]->type == AST_NUMBER);
         int n = ((AstNumber *)def->dimensions.elements[i])->number;
-        total_count *= n;
+        assert(n > 0);
         dimensions[i] = n;
+        sprintf(temp_type, "[%s, %d]", type, n);
+        strcpy(type, temp_type);
       }
-      assert(total_count > 0);
       symbol->type = SymbolType_array;
       symbol->dimensions = dimensions;
       symbol->dimension_count = def->dimensions.count;
-      outputf("[i32, %d], ", total_count);
+      outputf("global %s = alloc %s, ", name, type);
       if (def->val) {
         assert(def->val->type == AST_ARRAY_VALUE);
-        outputf("{");
-        AstArrayValue *array_value = (AstArrayValue *)def->val;
-        for (int i = 0; i < array_value->count; i++) {
-          assert(array_value->elements[i]->type == AST_NUMBER);
-          outputf("%d%s", ((AstNumber *)array_value->elements[i])->number,
-                  (i == total_count - 1) ? "" : ", ");
-        }
-        for (int i = array_value->count; i < total_count; i++) {
-          outputf("0%s", (i == total_count - 1) ? "" : ", ");
-        }
-        outputf("}\n");
+        codegen_array_init_value(dimensions, def->dimensions.count,
+                                 (AstArrayValue *)def->val);
+        outputf("\n");
       } else {
         outputf("zeroinit\n");
       }
     } else {
-      outputf("i32, ");
+      outputf("global %s = alloc i32, ", name);
       if (def->val) {
         assert(def->val->type == AST_NUMBER);
         outputf("%d\n", ((AstNumber *)def->val)->number);
@@ -1317,56 +1522,82 @@ static void codegen_global_var_decl(AstVarDecl *decl) {
     free((void *)name);
     def = def->next;
   }
+  free(type);
+  free(temp_type);
 }
 
 static void codegen_global_const_decl(AstConstDecl *decl) {
   AstConstDef *def = decl->def;
+  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
   while (def) {
     if (def->dimensions.count > 0) {
-      int total_count = 1;
       int *dimensions = malloc(sizeof(int) * def->dimensions.count);
-      for (int i = 0; i < def->dimensions.count; i++) {
+      strcpy(type, "i32");
+      for (int i = def->dimensions.count - 1; i > -1; i--) {
         assert(def->dimensions.elements[i]->type == AST_NUMBER);
         int n = ((AstNumber *)def->dimensions.elements[i])->number;
-        total_count *= n;
+        assert(n > 0);
         dimensions[i] = n;
+        sprintf(temp_type, "[%s, %d]", type, n);
+        strcpy(type, temp_type);
       }
-      assert(total_count > 0);
       Symbol *symbol = new_symbol(def->name, SymbolType_array);
       symbol->is_const_value = true;
       symbol->dimensions = dimensions;
       symbol->dimension_count = def->dimensions.count;
       const char *name = symbol_unique_name(symbol);
-      outputf("global %s = alloc [i32, %d], {", name, total_count);
-      if (def->val->type != AST_ARRAY_VALUE) {
+      outputf("global %s = alloc %s, ", name, type);
+      if (def->val == NULL || def->val->type != AST_ARRAY_VALUE) {
         fatalf("常量数组的值必须是数组\n");
       }
-      AstArrayValue *array_value = (AstArrayValue *)def->val;
-      for (int i = 0; i < array_value->count; i++) {
-        outputf("%d%s", ((AstNumber *)array_value->elements[i])->number,
-                (i == total_count - 1) ? "" : ", ");
-      }
-      for (int i = array_value->count; i < total_count; i++) {
-        outputf("0%s", (i == total_count - 1) ? "" : ", ");
-      }
-      outputf("}\n");
+      codegen_array_init_value(dimensions, def->dimensions.count,
+                               (AstArrayValue *)def->val);
+      outputf("\n");
+      free((void *)name);
     }
     def = def->next;
   }
+  free(type);
+  free(temp_type);
 }
 
 static void codegen_func_def(AstFuncDef *func_def) {
   temp_sign_index = 0;
   current_func_def = func_def;
   outputf("fun @%s(", func_def->ident->name);
-  if (func_def->param_count > 0) {
-    FuncParam *param = func_def->params;
-    while (param) {
+  FuncParam *param = func_def->params;
+  while (param) {
+    switch (param->type) {
+    case BType_INT:
       outputf("@%s: i32", param->ident->name);
-      param = param->next;
-      if (param) {
-        outputf(", ");
+      break;
+    case BType_POINTER:
+      outputf("@%s: *i32", param->ident->name);
+      break;
+    case BType_ARRAY_POINTER: {
+      assert(param->dimensions.count > 0);
+      char *type = malloc(param->dimensions.count * 32 * sizeof(char));
+      char *temp_type = malloc(param->dimensions.count * 32 * sizeof(char));
+      strcpy(type, "i32");
+      for (int i = param->dimensions.count - 1; i > -1; i--) {
+        assert(param->dimensions.elements[i]->type == AST_NUMBER);
+        int n = ((AstNumber *)param->dimensions.elements[i])->number;
+        assert(n > 0);
+        sprintf(temp_type, "[%s, %d]", type, n);
+        strcpy(type, temp_type);
       }
+      outputf("@%s: *%s", param->ident->name, type);
+      free(type);
+      free(temp_type);
+      break;
+    }
+    default:
+      fatalf("未知的参数类型\n");
+    }
+    param = param->next;
+    if (param) {
+      outputf(", ");
     }
   }
   outputf(") ");
@@ -1378,13 +1609,52 @@ static void codegen_func_def(AstFuncDef *func_def) {
   outputf("%%entry:\n");
 
   enter_scope();
-  FuncParam *param = func_def->params;
+  param = func_def->params;
   while (param) {
-    Symbol *symbol = new_symbol(param->ident->name, SymbolType_int);
-    const char *name = symbol_unique_name(symbol);
-    outputf("  %s = alloc i32\n", name);
-    outputf("  store @%s, %s\n", param->ident->name, name);
-    free((void *)name);
+    switch (param->type) {
+    case BType_INT: {
+      Symbol *symbol = new_symbol(param->ident->name, SymbolType_int);
+      const char *name = symbol_unique_name(symbol);
+      outputf("  %s = alloc i32\n", name);
+      outputf("  store @%s, %s\n", param->ident->name, name);
+      free((void *)name);
+      break;
+    }
+    case BType_POINTER: {
+      Symbol *symbol = new_symbol(param->ident->name, SymbolType_pointer);
+      const char *name = symbol_unique_name(symbol);
+      outputf("  %s = alloc *i32\n", name);
+      outputf("  store @%s, %s\n", param->ident->name, name);
+      free((void *)name);
+      break;
+    }
+    case BType_ARRAY_POINTER: {
+      assert(param->dimensions.count > 0);
+      Symbol *symbol = new_symbol(param->ident->name, SymbolType_array_pointer);
+      symbol->dimension_count = param->dimensions.count;
+      symbol->dimensions = malloc(sizeof(int) * param->dimensions.count);
+      const char *name = symbol_unique_name(symbol);
+      char *type = malloc(param->dimensions.count * 32 * sizeof(char));
+      char *temp_type = malloc(param->dimensions.count * 32 * sizeof(char));
+      strcpy(type, "i32");
+      for (int i = param->dimensions.count - 1; i > -1; i--) {
+        assert(param->dimensions.elements[i]->type == AST_NUMBER);
+        int n = ((AstNumber *)param->dimensions.elements[i])->number;
+        assert(n > 0);
+        sprintf(temp_type, "[%s, %d]", type, n);
+        strcpy(type, temp_type);
+        symbol->dimensions[i] = n;
+      }
+      outputf("  %s = alloc *%s\n", name, type);
+      outputf("  store @%s, %s\n", param->ident->name, name);
+      free(type);
+      free(temp_type);
+      free((void *)name);
+      break;
+    }
+    default:
+      fatalf("未知的参数类型\n");
+    }
     param = param->next;
   }
 
