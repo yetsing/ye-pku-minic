@@ -23,7 +23,7 @@ static void outputf(const char *fmt, ...) {
   va_end(args);
 }
 
-static int temp_index = -1; // 给临时变量计数用的
+static int temp_index = 0; // 给临时变量计数用的
 // 函数返回时，需要恢复 sp ，所以需要记录栈的大小
 // 即生成 ret 指令时，需要将 sp 加上这个大小，恢复栈空间
 static size_t stack_size = 0;
@@ -34,6 +34,7 @@ static bool has_call = false;
 typedef enum {
   VariableType_int,
   VariableType_array,
+  VariableType_pointer,
 } VariableType;
 
 typedef struct Variable Variable;
@@ -127,11 +128,13 @@ static void locals_reset(void) {
 // 临时变量的偏移量，对应 IR 中的 %0, %1, %2, ...
 static int get_temp_offset(void) {
   int last = last_offset();
+  assert(temp_index > 0);
   int n = (temp_index - 1) * 4 + last;
   // assert(n >= 0 && n < stack_size);
   return n;
 }
 
+static int get_type_size(const koopa_raw_type_t ty);
 static void visit_koopa_raw_return(const koopa_raw_return_t ret);
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n);
 static void visit_koopa_raw_value(const koopa_raw_value_t value);
@@ -147,6 +150,8 @@ static void visit_koopa_raw_global_alloc(const koopa_raw_global_alloc_t alloc,
                                          const char *name);
 static void
 visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t get_elem_ptr);
+static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr);
+static void visit_global_init(const koopa_raw_value_t init);
 
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("\n  # === return ===\n");
@@ -169,7 +174,14 @@ static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   }
   if (has_call) {
     // 如果调用了其他函数，需要恢复 ra 寄存器
-    outputf("  lw ra, %zu(sp)\n", stack_size - 4);
+    int offset = stack_size - 4;
+    if (offset >= 2048) {
+      outputf("  li t0, %d\n", offset);
+      outputf("  add t0, sp, t0\n");
+      outputf("  lw ra, 0(t0)\n");
+    } else {
+      outputf("  lw ra, %zu(sp)\n", stack_size - 4);
+    }
   }
 
   // 函数返回，恢复栈空间 epilogue
@@ -210,7 +222,13 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     }
   } else {
     // 从栈中取出 lhs
-    outputf("  lw t0, %d(sp)\n", lhs_offset);
+    if (lhs_offset >= 2048) {
+      outputf("  li t0, %d\n", lhs_offset);
+      outputf("  add t0, sp, t0\n");
+      outputf("  lw t0, 0(t0)\n");
+    } else {
+      outputf("  lw t0, %d(sp)\n", lhs_offset);
+    }
   }
 
   const char *rhs_register = "t1";
@@ -224,7 +242,13 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     }
   } else {
     // 从栈中取出 rhs
-    outputf("  lw t1, %d(sp)\n", rhs_offset);
+    if (rhs_offset >= 2048) {
+      outputf("  li t1, %d\n", rhs_offset);
+      outputf("  add t1, sp, t1\n");
+      outputf("  lw t1, 0(t1)\n");
+    } else {
+      outputf("  lw t1, %d(sp)\n", rhs_offset);
+    }
   }
 
   // 目前所有变量都存储在栈上，所以这里可以直接使用 t0 作为结果寄存器
@@ -284,7 +308,14 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
   }
   temp_index++; // 存在返回值，所以栈指针需要移动
   // 将结果存储到栈上
-  outputf("  sw %s, %d(sp)\n", result_register, get_temp_offset());
+  int offset = get_temp_offset();
+  if (offset >= 2048) {
+    outputf("  li t1, %d\n", offset);
+    outputf("  add t1, sp, t1\n");
+    outputf("  sw %s, 0(t1)\n", result_register);
+  } else {
+    outputf("  sw %s, %d(sp)\n", result_register, offset);
+  }
   outputf("  # === binary %d end ===\n", binary.op);
 }
 
@@ -299,7 +330,8 @@ static void visit_koopa_raw_load(const koopa_raw_load_t load) {
       outputf("  add t1, sp, t1\n");
       outputf("  sw t0, 0(t1)\n");
     } else {
-      outputf("  sw t0, %d(sp)\n", get_temp_offset());
+      assert(offset2 < 2048);
+      outputf("  sw t0, %d(sp)\n", offset2);
     }
   } else if (load.src->kind.tag == KOOPA_RVT_ALLOC) {
     int offset = get_offset(load.src->name);
@@ -317,21 +349,23 @@ static void visit_koopa_raw_load(const koopa_raw_load_t load) {
       outputf("  add t1, sp, t1\n");
       outputf("  sw t0, 0(t1)\n");
     } else {
+      assert(offset2 < 2048);
       outputf("  sw t0, %d(sp)\n", offset2);
     }
-  } else if (load.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR) {
-    visit_koopa_raw_get_elem_ptr(load.src->kind.data.get_elem_ptr);
+  } else if (load.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
+             load.src->kind.tag == KOOPA_RVT_GET_PTR) {
+    visit_koopa_raw_value(load.src);
     // 将值加载到 t0
     int offset = get_temp_offset();
     if (offset >= 2048) {
-      outputf("  li t1, %d\n", offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  lw t1, 0(t1)\n");
-      // t1 存的是地址，需要再取一次
-      outputf("  lw t0, 0(t1)\n");
+      outputf("  li t0, %d\n", offset);
+      outputf("  add t0, sp, t0\n");
+      outputf("  lw t0, 0(t0)\n");
+      // t0 存的是地址，需要再取一次
+      outputf("  lw t0, 0(t0)\n");
     } else {
-      outputf("  lw t1, %d(sp)\n", offset);
-      // t1 存的是地址，需要再取一次
+      outputf("  lw t0, %d(sp)\n", offset);
+      // t0 存的是地址，需要再取一次
       outputf("  lw t0, 0(t0)\n");
     }
     temp_index++; // 存在返回值，所以栈指针需要移动
@@ -341,6 +375,7 @@ static void visit_koopa_raw_load(const koopa_raw_load_t load) {
       outputf("  add t1, sp, t1\n");
       outputf("  sw t0, 0(t1)\n");
     } else {
+      assert(offset2 < 2048);
       outputf("  sw t0, %d(sp)\n", offset2);
     }
   } else {
@@ -351,25 +386,42 @@ static void visit_koopa_raw_load(const koopa_raw_load_t load) {
 static void visit_koopa_raw_store(const koopa_raw_store_t store) {
   if (store.dest->kind.tag == KOOPA_RVT_ALLOC ||
       store.dest->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+    outputf("  # === store alloc ===\n");
     if (store.value->kind.tag == KOOPA_RVT_FUNC_ARG_REF) {
       int index = store.value->kind.data.func_arg_ref.index;
       if (index < 8) {
         // 参数在 a0 ~ a7 中
-        outputf("  sw a%d, %d(sp)\n", index, get_offset(store.dest->name));
+        int offset = get_offset(store.dest->name);
+        if (offset >= 2048) {
+          outputf("  li t0, %d\n", offset);
+          outputf("  add t0, sp, t0\n");
+          outputf("  sw a%d, 0(t0)\n", index);
+        } else {
+          outputf("  sw a%d, %d(sp)\n", index, offset);
+        }
       } else {
         // 参数在栈上
-        outputf("  lw t0, %d(sp)\n", (int)stack_size + (index - 8) * 4);
+        int offset = (int)stack_size + (index - 8) * 4;
+        if (offset >= 2048) {
+          outputf("  li t0, %d\n", offset);
+          outputf("  add t0, sp, t0\n");
+          outputf("  lw t0, 0(t0)\n");
+        } else {
+          outputf("  lw t0, %d(sp)\n", offset);
+        }
         // 结果已经在 t0 中了，直接存储到栈上
         // outputf("  lw t0, %d(sp)\n", get_temp_offset());
-        int offset = get_offset(store.dest->name);
+        offset = get_offset(store.dest->name);
         if (offset >= 2048) {
           outputf("  li t1, %d\n", offset);
           outputf("  add t1, sp, t1\n");
           outputf("  sw t0, 0(t1)\n");
         } else {
+          assert(offset < 2048);
           outputf("  sw t0, %d(sp)\n", offset);
         }
       }
+      outputf("  # === end store arg ref ===\n");
     } else {
       visit_koopa_raw_value(store.value);
       // 结果已经在 t0 中了，直接存储到栈上
@@ -384,6 +436,7 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
           outputf("  add t1, sp, t1\n");
           outputf("  sw t0, 0(t1)\n");
         } else {
+          assert(offset < 2048);
           outputf("  sw t0, %d(sp)\n", offset);
         }
       }
@@ -398,6 +451,7 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
     // 保存的地址
     visit_koopa_raw_value(store.dest);
     int dst_offset = get_temp_offset();
+    outputf("  # === store get_elem_ptr ===\n");
     if (store.value->kind.tag == KOOPA_RVT_INTEGER) {
       // 如果保存的值是常量，直接使用立即数
       outputf("  li t0, %d\n", store.value->kind.data.integer.value);
@@ -420,10 +474,44 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
       outputf("  lw t1, %d(sp)\n", dst_offset);
     }
     outputf("  sw t0, 0(t1)\n");
+  } else if (store.dest->kind.tag == KOOPA_RVT_GET_PTR) {
+    // 保存的值
+    int val_offset = 0;
+    if (store.value->kind.tag != KOOPA_RVT_INTEGER) {
+      visit_koopa_raw_value(store.value);
+      val_offset = get_temp_offset();
+    }
+    // 保存的地址
+    visit_koopa_raw_value(store.dest);
+    int dst_offset = get_temp_offset();
+    outputf("  # === store get_ptr ===\n");
+    if (store.value->kind.tag == KOOPA_RVT_INTEGER) {
+      // 如果保存的值是常量，直接使用立即数
+      outputf("  li t0, %d\n", store.value->kind.data.integer.value);
+    } else {
+      // 从栈中取出值到 t0
+      if (val_offset >= 2048) {
+        outputf("  li t0, %d\n", val_offset);
+        outputf("  add t0, sp, t0\n");
+        outputf("  lw t0, 0(t0)\n");
+      } else {
+        outputf("  lw t0, %d(sp)\n", val_offset);
+      }
+    }
+    // 将值保存到对应地址中
+    if (dst_offset >= 2048) {
+      outputf("  li t1, %d\n", dst_offset);
+      outputf("  add t1, sp, t1\n");
+      outputf("  lw t1, 0(t1)\n");
+    } else {
+      outputf("  lw t1, %d(sp)\n", dst_offset);
+    }
+    outputf("  sw t0, 0(t1)\n");
   } else {
     fatalf("visit_koopa_raw_store unknown dest kind: %d\n",
            store.dest->kind.tag);
   }
+  outputf("  # === end store ===\n");
 }
 
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch) {
@@ -445,7 +533,7 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
   int *arg_offsets = (int *)malloc(call.args.len * sizeof(int));
   memset(arg_offsets, 0, call.args.len * sizeof(int));
   // 先对调用参数求值
-  for (int i = 0; i < 8 && i < call.args.len; i++) {
+  for (int i = 0; i < call.args.len; i++) {
     const koopa_raw_value_t arg = call.args.buffer[i];
     if (arg->kind.tag == KOOPA_RVT_INTEGER) {
       // 参数是常量，直接使用立即数
@@ -462,7 +550,14 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
       // 参数是常量，直接使用立即数
       outputf("  li a%d, %d\n", i, arg->kind.data.integer.value);
     } else {
-      outputf("  lw a%d, %d(sp)\n", i, arg_offsets[i]);
+      int offset = arg_offsets[i];
+      if (offset >= 2048) {
+        outputf("  li t0, %d\n", offset);
+        outputf("  add t0, sp, t0\n");
+        outputf("  lw a%d, 0(t0)\n", i);
+      } else {
+        outputf("  lw a%d, %d(sp)\n", i, arg_offsets[i]);
+      }
     }
   }
   // 如果参数个数大于 8，需要额外的栈空间保存参数
@@ -472,9 +567,23 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
       // 参数是常量，直接使用立即数
       outputf("  li t0, %d\n", arg->kind.data.integer.value);
     } else {
-      outputf("  lw t0, %d(sp)\n", arg_offsets[i]);
+      int offset = arg_offsets[i];
+      if (offset >= 2048) {
+        outputf("  li t0, %d\n", offset);
+        outputf("  add t0, sp, t0\n");
+        outputf("  lw t0, 0(t0)\n");
+      } else {
+        outputf("  lw t0, %d(sp)\n", arg_offsets[i]);
+      }
     }
-    outputf("  sw t0, %d(sp)\n", (i - 8) * 4);
+    int offset = (i - 8) * 4;
+    if (offset >= 2048) {
+      outputf("  li t1, %d\n", offset);
+      outputf("  add t1, sp, t1\n");
+      outputf("  sw t0, 0(t1)\n");
+    } else {
+      outputf("  sw t0, %d(sp)\n", offset);
+    }
   }
 
   // 调用函数
@@ -482,10 +591,35 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
   if (has_return) {
     // 保存返回值
     temp_index++; // 存在返回值，所以栈指针需要移动
-    outputf("  sw a0, %d(sp)\n", get_temp_offset());
+    int offset = get_temp_offset();
+    if (offset >= 2048) {
+      outputf("  li t0, %d\n", offset);
+      outputf("  add t0, sp, t0\n");
+      outputf("  sw a0, 0(t0)\n");
+    } else {
+      outputf("  sw a0, %d(sp)\n", offset);
+    }
     outputf("  mv t0, a0\n");
   }
   outputf("  # === call end ===\n");
+}
+
+static void visit_global_init(const koopa_raw_value_t init) {
+  if (init->kind.tag == KOOPA_RVT_INTEGER) {
+    outputf("  .word %d\n", init->kind.data.integer.value);
+  } else if (init->kind.tag == KOOPA_RVT_AGGREGATE) {
+    for (size_t i = 0; i < init->kind.data.aggregate.elems.len; i++) {
+      const koopa_raw_value_t elem = init->kind.data.aggregate.elems.buffer[i];
+      visit_global_init(elem);
+    }
+  } else if (init->kind.tag == KOOPA_RVT_ZERO_INIT) {
+    int size = get_type_size(init->ty);
+    for (size_t i = 0; i < (size / 4); i++) {
+      outputf("  .zero 4\n");
+    }
+  } else {
+    fatalf("viist_global_init unknown kind: %d\n", init->kind.tag);
+  }
 }
 
 static void visit_koopa_raw_global_alloc(const koopa_raw_global_alloc_t alloc,
@@ -493,54 +627,36 @@ static void visit_koopa_raw_global_alloc(const koopa_raw_global_alloc_t alloc,
   new_global_variable(name);
   outputf("  .global %s\n", name + 1);
   outputf("%s:\n", name + 1);
-  if (alloc.init->ty->tag == KOOPA_RTT_INT32) {
-    if (alloc.init->kind.tag == KOOPA_RVT_INTEGER) {
-      outputf("  .word %d\n", alloc.init->kind.data.integer.value);
-    } else if (alloc.init->kind.tag == KOOPA_RVT_ZERO_INIT) {
-      outputf("  .zero 4\n");
-    } else {
-      fatalf("visit_koopa_raw_global_alloc unknown kind: %d\n",
-             alloc.init->kind.tag);
-    }
-  } else if (alloc.init->ty->tag == KOOPA_RTT_ARRAY) {
-    if (alloc.init->kind.tag == KOOPA_RVT_AGGREGATE) {
-      for (size_t i = 0; i < alloc.init->kind.data.aggregate.elems.len; i++) {
-        const koopa_raw_value_t elem =
-            alloc.init->kind.data.aggregate.elems.buffer[i];
-        if (elem->kind.tag == KOOPA_RVT_INTEGER) {
-          outputf("  .word %d\n", elem->kind.data.integer.value);
-        } else {
-          fatalf("visit_koopa_raw_global_alloc unknown elem kind: %d\n",
-                 elem->kind.tag);
-        }
-      }
-    } else if (alloc.init->kind.tag == KOOPA_RVT_ZERO_INIT) {
-      for (size_t i = 0; i < alloc.init->ty->data.array.len; i++) {
-        outputf("  .zero 4\n");
-      }
-    } else {
-      fatalf("visit_koopa_raw_global_alloc unknown kind: %d\n",
-             alloc.init->kind.tag);
-    }
+  visit_global_init(alloc.init);
+}
+
+static int get_type_size(const koopa_raw_type_t ty) {
+  if (ty->tag == KOOPA_RTT_INT32 || ty->tag == KOOPA_RTT_POINTER) {
+    return 4;
+  } else if (ty->tag == KOOPA_RTT_ARRAY) {
+    return ty->data.array.len * get_type_size(ty->data.array.base);
   } else {
-    fatalf("visit_koopa_raw_global_alloc unknown type: %d\n",
-           alloc.init->ty->tag);
+    fatalf("get_array_size unknown type: %d\n", ty->tag);
+    return -1;
   }
 }
 
 static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
-  outputf("\n  # === get_elem_ptr ===\n");
-  int index_offset = -1;
-  if (gep.index->kind.tag != KOOPA_RVT_INTEGER) {
-    visit_koopa_raw_value(gep.index);
-    index_offset = get_temp_offset();
-  }
   if (gep.src->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+    // src type: *[t, len]
+    // getelemptr = src + sizeof(t) * index
+    int index_offset = -1;
+    if (gep.index->kind.tag != KOOPA_RVT_INTEGER) {
+      visit_koopa_raw_value(gep.index);
+      index_offset = get_temp_offset();
+    }
+    outputf("\n  # === get_elem_ptr global_alloc ===\n");
     // 全局变量
     outputf("  la t0, %s\n", gep.src->name + 1);
     if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
-      outputf("  li t1, %d\n", gep.src->kind.data.integer.value);
+      outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
     } else {
+      assert(index_offset > 0);
       if (index_offset >= 2048) {
         outputf("  li t1, %d\n", index_offset);
         outputf("  add t1, sp, t1\n");
@@ -549,7 +665,9 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
         outputf("  lw t1, %d(sp)\n", index_offset);
       }
     }
-    outputf("  li t2, 4\n");
+    // 计算 sizeof(t)
+    int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
+    outputf("  li t2, %d\n", size);
     outputf("  mul t1, t1, t2\n");
     outputf("  add t0, t0, t1\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
@@ -559,9 +677,20 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
       outputf("  add t1, sp, t1\n");
       outputf("  sw t0, 0(t1)\n");
     } else {
+      assert(offset < 2048);
       outputf("  sw t0, %d(sp)\n", offset);
     }
   } else if (gep.src->kind.tag == KOOPA_RVT_ALLOC) {
+    // src type: *[t, len]
+    // getelemptr = src + sizeof(t) * index
+    assert(gep.src->ty->tag == KOOPA_RTT_POINTER);
+    assert(gep.src->ty->data.pointer.base->tag == KOOPA_RTT_ARRAY);
+    int index_offset = -1;
+    if (gep.index->kind.tag != KOOPA_RVT_INTEGER) {
+      visit_koopa_raw_value(gep.index);
+      index_offset = get_temp_offset();
+    }
+    outputf("\n  # === get_elem_ptr ===\n");
     // 局部变量
     // 加载变量地址到 t0
     int offset = get_offset(gep.src->name);
@@ -575,6 +704,7 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
     if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
       outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
     } else {
+      assert(index_offset > 0);
       if (index_offset >= 2048) {
         outputf("  li t1, %d\n", index_offset);
         outputf("  add t1, sp, t1\n");
@@ -583,7 +713,9 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
         outputf("  lw t1, %d(sp)\n", index_offset);
       }
     }
-    outputf("  li t2, 4\n");
+    // 计算 sizeof(t)
+    int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
+    outputf("  li t2, %d\n", size);
     outputf("  mul t1, t1, t2\n");
     outputf("  add t0, t0, t1\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
@@ -593,6 +725,57 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
       outputf("  add t1, sp, t1\n");
       outputf("  sw t0, 0(t1)\n");
     } else {
+      assert(offset2 < 2048);
+      outputf("  sw t0, %d(sp)\n", offset2);
+    }
+  } else if (gep.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
+             gep.src->kind.tag == KOOPA_RVT_GET_PTR) {
+    // src type: *[t, len]
+    // getelemptr = src + sizeof(t) * index
+    assert(gep.src->ty->tag == KOOPA_RTT_POINTER);
+    assert(gep.src->ty->data.pointer.base->tag == KOOPA_RTT_ARRAY);
+    visit_koopa_raw_value(gep.src);
+    int ele_offset = get_temp_offset();
+    int index_offset = -1;
+    if (gep.index->kind.tag != KOOPA_RVT_INTEGER) {
+      visit_koopa_raw_value(gep.index);
+      index_offset = get_temp_offset();
+    }
+    outputf("\n  # === get_elem_ptr ===\n");
+    // 加载地址到 t0
+    if (ele_offset >= 2048) {
+      outputf("  li t0, %d\n", ele_offset);
+      outputf("  add t0, sp, t0\n");
+      outputf("  lw t0, 0(t0)\n");
+    } else {
+      outputf("  lw t0, %d(sp)\n", ele_offset);
+    }
+    // 加载索引到 t1
+    if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
+      outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
+    } else {
+      assert(index_offset > 0);
+      if (index_offset >= 2048) {
+        outputf("  li t1, %d\n", index_offset);
+        outputf("  add t1, sp, t1\n");
+        outputf("  lw t1, 0(t1)\n");
+      } else {
+        outputf("  lw t1, %d(sp)\n", index_offset);
+      }
+    }
+    // 计算 sizeof(t)
+    int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
+    outputf("  li t2, %d\n", size);
+    outputf("  mul t1, t1, t2\n");
+    outputf("  add t0, t0, t1\n");
+    temp_index++; // 存在返回值，所以栈指针需要移动
+    int offset2 = get_temp_offset();
+    if (offset2 >= 2048) {
+      outputf("  li t1, %d\n", offset2);
+      outputf("  add t1, sp, t1\n");
+      outputf("  sw t0, 0(t1)\n");
+    } else {
+      assert(offset2 < 2048);
       outputf("  sw t0, %d(sp)\n", offset2);
     }
   } else {
@@ -600,6 +783,54 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
            gep.src->kind.tag);
   }
   outputf("  # === get_elem_ptr end ===\n");
+}
+
+static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr) {
+  // get_ptr = src + sizeof(t) * index
+  int index_offset = -1;
+  if (get_ptr.index->kind.tag != KOOPA_RVT_INTEGER) {
+    visit_koopa_raw_value(get_ptr.index);
+    index_offset = get_temp_offset();
+  }
+  visit_koopa_raw_value(get_ptr.src);
+  int src_offset = get_temp_offset();
+  outputf("\n  # === get_ptr ===\n");
+  // 加载地址到 t0
+  if (src_offset >= 2048) {
+    outputf("  li t0, %d\n", src_offset);
+    outputf("  add t0, sp, t0\n");
+    outputf("  lw t0, 0(t0)\n");
+  } else {
+    outputf("  lw t0, %d(sp)\n", src_offset);
+  }
+  // 加载索引到 t1
+  if (get_ptr.index->kind.tag == KOOPA_RVT_INTEGER) {
+    outputf("  li t1, %d\n", get_ptr.index->kind.data.integer.value);
+  } else {
+    assert(index_offset > 0);
+    if (index_offset >= 2048) {
+      outputf("  li t1, %d\n", index_offset);
+      outputf("  add t1, sp, t1\n");
+      outputf("  lw t1, 0(t1)\n");
+    } else {
+      outputf("  lw t1, %d(sp)\n", index_offset);
+    }
+  }
+  // 计算 sizeof(t)
+  int size = get_type_size(get_ptr.src->ty->data.pointer.base);
+  outputf("  li t2, %d\n", size);
+  outputf("  mul t1, t1, t2\n");
+  outputf("  add t0, t0, t1\n");
+  temp_index++; // 存在返回值，所以栈指针需要移动
+  int offset2 = get_temp_offset();
+  if (offset2 >= 2048) {
+    outputf("  li t1, %d\n", offset2);
+    outputf("  add t1, sp, t1\n");
+    outputf("  sw t0, 0(t1)\n");
+  } else {
+    assert(offset2 < 2048);
+    outputf("  sw t0, %d(sp)\n", offset2);
+  }
 }
 
 static void visit_koopa_raw_value(const koopa_raw_value_t value) {
@@ -638,6 +869,9 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
     break;
   case KOOPA_RVT_GET_ELEM_PTR:
     visit_koopa_raw_get_elem_ptr(kind.data.get_elem_ptr);
+    break;
+  case KOOPA_RVT_GET_PTR:
+    visit_koopa_raw_get_ptr(kind.data.get_ptr);
     break;
   default:
     fatalf("visit_koopa_raw_value unknown kind: %d\n", kind.tag);
@@ -682,10 +916,17 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
             variable->size = 4;
             variable->type = VariableType_int;
             break;
-          case KOOPA_RTT_ARRAY:
-            stack_size += pval->data.array.len * 4;
-            variable->size = pval->data.array.len * 4;
+          case KOOPA_RTT_ARRAY: {
+            int size = get_type_size(pval);
+            stack_size += size;
+            variable->size = size;
             variable->type = VariableType_array;
+            break;
+          }
+          case KOOPA_RTT_POINTER:
+            stack_size += 4;
+            variable->size = 4;
+            variable->type = VariableType_pointer;
             break;
           default:
             fatalf("visit_koopa_raw_function alloc unknown type: %d\n",
@@ -722,7 +963,14 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
   }
   if (has_call) {
     // 保存 ra 寄存器
-    outputf("  sw ra, %zu(sp)\n", stack_size - 4);
+    int offset = stack_size - 4;
+    if (offset >= 2048) {
+      outputf("  li t0, %d\n", offset);
+      outputf("  add t0, sp, t0\n");
+      outputf("  sw ra, 0(t0)\n");
+    } else {
+      outputf("  sw ra, %zu(sp)\n", stack_size - 4);
+    }
   }
   visit_koopa_raw_slice(func->bbs);
 }

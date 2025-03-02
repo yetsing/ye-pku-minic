@@ -126,7 +126,7 @@ static char peek(void) { return tokenizer.current[1]; }
 static void skip_whitespace(void) {
   while (true) {
     char c = *tokenizer.current;
-    if (c == ' ' || c == '\t' || c == '\n') {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
       if (c == '\n') {
         tokenizer.line++;
       }
@@ -269,7 +269,7 @@ Token next_token(void) {
         advance();
         return (Token){TOKEN_AND, tokenizer.start, 2, tokenizer.line};
       } else {
-        fatalf("无法识别的字符 %c at line %d\n", c, tokenizer.line);
+        fatalf("无法识别的字符 %d at line %d\n", c, tokenizer.line);
       }
     }
     case '|': {
@@ -278,7 +278,7 @@ Token next_token(void) {
         advance();
         return (Token){TOKEN_OR, tokenizer.start, 2, tokenizer.line};
       } else {
-        fatalf("无法识别的字符 %c at line %d\n", c, tokenizer.line);
+        fatalf("无法识别的字符 %d at line %d\n", c, tokenizer.line);
       }
     }
     case '%':
@@ -345,7 +345,7 @@ Token next_token(void) {
       if (is_digit(c)) {
         return integer();
       }
-      fatalf("无法识别的字符 %c(%d) at line %d\n", c, c, tokenizer.line);
+      fatalf("无法识别的字符 %d at line %d\n", c, tokenizer.line);
     }
   }
 }

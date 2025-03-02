@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void fatalf(const char *fmt, ...) {
+void internal_fatalf(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   vfprintf(stderr, fmt, args);
