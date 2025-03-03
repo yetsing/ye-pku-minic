@@ -188,37 +188,34 @@ typedef struct {
 } AstAssignStmt;
 AstAssignStmt *new_ast_assign_stmt();
 
-typedef struct AstConstDef AstConstDef;
-typedef struct AstConstDef {
-  AstBase base;
-  const char *name;
-  ExpArray dimensions;
-  AstExp *val;
-  AstConstDef *next; // 使用链表结构存储多个常量定义
-} AstConstDef;
-AstConstDef *new_ast_const_def();
-
-typedef struct {
-  AstStmt base;
-  BType type;
-  AstConstDef *def;
-} AstConstDecl;
-AstConstDecl *new_ast_const_decl();
-
 typedef struct AstVarDef AstVarDef;
 typedef struct AstVarDef {
   AstBase base;
   const char *name;
   ExpArray dimensions;
   AstExp *val;
-  AstVarDef *next;
 } AstVarDef;
 AstVarDef *new_ast_var_def();
 
 typedef struct {
+  AstVarDef **elements;
+  int count;
+  int capacity;
+} VarDefArray;
+void init_var_def_array(VarDefArray *array);
+void var_def_array_add(VarDefArray *array, AstVarDef *def);
+
+typedef struct {
   AstStmt base;
   BType type;
-  AstVarDef *def;
+  VarDefArray defs;
+} AstConstDecl;
+AstConstDecl *new_ast_const_decl();
+
+typedef struct {
+  AstStmt base;
+  BType type;
+  VarDefArray defs;
 } AstVarDecl;
 AstVarDecl *new_ast_var_decl();
 

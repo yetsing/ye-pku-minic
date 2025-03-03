@@ -412,52 +412,14 @@ AstAssignStmt *new_ast_assign_stmt() {
   return node;
 }
 
-void ast_const_def_dump(AstConstDef *node, int indent) {
-  printf("ConstDef: {\n");
-  printf("%*s  name: %s\n", indent, " ", node->name);
-  if (node->dimensions.count > 0) {
-    printf("%*s  dimensions: {\n", indent, " ");
-    for (int i = 0; i < node->dimensions.count; i++) {
-      printf("%*s  ", indent + 2, " ");
-      // if (node->dimensions.elements[i] == NULL) {
-      //   printf("%*s  <default>,\n", indent + 2, " ");
-      //   continue;
-      // }
-      node->dimensions.elements[i]->dump(
-          (AstBase *)node->dimensions.elements[i], indent + 2);
-      printf(",\n");
-    }
-    printf("%*s  },\n", indent, " ");
-  }
-  printf("%*s  val: ", indent, " ");
-  node->val->dump((AstBase *)node->val, indent + 2);
-  printf(",\n");
-  printf("%*s}", indent, " ");
-}
-
-AstConstDef *new_ast_const_def() {
-  AstConstDef *node = calloc(1, sizeof(AstConstDef));
-  node->base.type = AST_CONST_DEF;
-  node->base.dump = (DumpFunc)ast_const_def_dump;
-  node->name = NULL;
-  node->val = NULL;
-  node->next = NULL;
-  init_exp_array(&node->dimensions);
-  return node;
-}
-
 void ast_const_decl_dump(AstConstDecl *node, int indent) {
   printf("ConstDecl: {\n");
-  AstConstDef *def = node->def;
-  while (def) {
+  for (int i = 0; i < node->defs.count; i++) {
     printf("%*s  ", indent, " ");
-    def->base.dump((AstBase *)def, indent + 2);
-    def = def->next;
-    if (def) {
-      printf(",\n");
-    }
+    node->defs.elements[i]->base.dump((AstBase *)node->defs.elements[i],
+                                      indent + 2);
+    printf(",\n");
   }
-  printf(",\n");
   printf("%*s}", indent, " ");
 }
 
@@ -465,7 +427,7 @@ AstConstDecl *new_ast_const_decl() {
   AstConstDecl *node = calloc(1, sizeof(AstConstDecl));
   node->base.type = AST_CONST_DECL;
   node->base.dump = (DumpFunc)ast_const_decl_dump;
-  node->def = NULL;
+  init_var_def_array(&node->defs);
   return node;
 }
 
@@ -504,14 +466,28 @@ AstVarDef *new_ast_var_def() {
   return node;
 }
 
+void init_var_def_array(VarDefArray *array) {
+  array->count = 0;
+  array->capacity = 10;
+  array->elements = calloc(array->capacity, sizeof(AstVarDef *));
+}
+
+void var_def_array_add(VarDefArray *array, AstVarDef *element) {
+  if (array->count >= array->capacity) {
+    array->capacity *= 2;
+    array->elements =
+        realloc(array->elements, array->capacity * sizeof(AstVarDef *));
+  }
+  array->elements[array->count++] = element;
+}
+
 void ast_var_decl_dump(AstVarDecl *node, int indent) {
   printf("VarDecl: {\n");
-  AstVarDef *def = node->def;
-  while (def) {
+  for (int i = 0; i < node->defs.count; i++) {
     printf("%*s  ", indent, " ");
-    def->base.dump((AstBase *)def, indent + 2);
+    node->defs.elements[i]->base.dump((AstBase *)node->defs.elements[i],
+                                      indent + 2);
     printf(",\n");
-    def = def->next;
   }
   printf("%*s}", indent, " ");
 }
@@ -521,7 +497,7 @@ AstVarDecl *new_ast_var_decl() {
   node->base.type = AST_VAR_DECL;
   node->base.dump = (DumpFunc)ast_var_decl_dump;
   node->type = BType_UNKNOWN;
-  node->def = NULL;
+  init_var_def_array(&node->defs);
   return node;
 }
 

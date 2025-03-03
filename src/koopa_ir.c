@@ -17,7 +17,11 @@ int temp_sign_index = 0;
 int if_index = 0;
 // while 计数，用来生成唯一的标签
 int while_index = 0;
-// while body 计数，用来给 break continue 生成唯一标签
+/*
+ * while body 计数，用来给 break continue 后的指令生成唯一标签
+ * break continue 会中断当前指令的 basic block
+ * 所以需要重新生成一个新的 basic block
+ */
 int while_body_index = 0;
 // while 栈结构，用来辅助 break continue 生成
 IntStack while_stack;
@@ -82,8 +86,8 @@ typedef struct Symbol {
   Symbol *next; // 指向下一个符号
 
   SymbolType type;
-  FunctionType func_type;
-  int *dimensions; // 数组的维度
+  FunctionType func_type; // 函数的类型
+  int *dimensions;        // 数组的维度
   int dimension_count;
 } Symbol;
 
@@ -376,9 +380,7 @@ void print_int_array(const char *prefix, int coordinates[], int n) {
 void do_flatten(int dimensions[], int dimension_count, AstArrayValue *val,
                 int coordinates[], int current, ExpArray *result) {
   assert(current > 0);
-  // printf("%*sdo_flatten current: %d\n", 2 * (count - current), " ", current);
   for (int i = 0; i < val->count; i++) {
-    // print_int_array("coordinates", coordinates, count);
     if (val->elements[i]->type == AST_ARRAY_VALUE) {
       assert(coordinates[dimension_count - 1] == 0);
       int origin = coordinates[dimension_count - current];
@@ -404,9 +406,6 @@ void do_flatten(int dimensions[], int dimension_count, AstArrayValue *val,
         }
         index += n;
       }
-      // printf("set index %d <", index);
-      // val->elements[i]->dump((AstBase *)val->elements[i], 0);
-      // printf(">\n");
       result->elements[index] = val->elements[i];
       coordinates[dimension_count - 1]++;
 
@@ -440,14 +439,10 @@ AstExp *flatten_multi_dimension_array(int dimensions[], int dimension_count,
     }
     return val;
   }
-  // print_int_array("dimensions", dimensions, count);
-  // printf("flatten_multi_dimension_array length: %d\n",
-  //  ((AstArrayValue *)val)->count);
   int total_count = 1;
   for (int i = 0; i < dimension_count; i++) {
     total_count *= dimensions[i];
   }
-  // printf("total_count: %d\n", total_count);
   ExpArray result;
   init_exp_array(&result);
   result.count = total_count;
@@ -472,8 +467,8 @@ AstExp *flatten_multi_dimension_array(int dimensions[], int dimension_count,
 }
 
 void optimize_const_decl(AstConstDecl *decl) {
-  AstConstDef *def = decl->def;
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
     assert(def->val != NULL);
     SymbolType symbol_type = SymbolType_int;
     if (def->dimensions.count > 0) {
@@ -494,13 +489,12 @@ void optimize_const_decl(AstConstDecl *decl) {
     Symbol *symbol = new_symbol(def->name, symbol_type);
     symbol->is_const_value = true;
     symbol->value = value;
-    def = def->next;
   }
 }
 
 void optimize_var_decl(AstVarDecl *decl) {
-  AstVarDef *def = decl->def;
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
     if (def->dimensions.count > 0) {
       int dimensions[def->dimensions.count];
       for (int i = 0; i < def->dimensions.count; i++) {
@@ -520,13 +514,12 @@ void optimize_var_decl(AstVarDecl *decl) {
         def->val = optimize_exp(def->val);
       }
     }
-    def = def->next;
   }
 }
 
 void optimize_global_var_decl(AstVarDecl *decl) {
-  AstVarDef *def = decl->def;
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
     if (def->dimensions.count > 0) {
       int dimensions[def->dimensions.count];
       for (int i = 0; i < def->dimensions.count; i++) {
@@ -551,7 +544,6 @@ void optimize_global_var_decl(AstVarDecl *decl) {
         def->val = (AstExp *)number;
       }
     }
-    def = def->next;
   }
 }
 
@@ -1175,10 +1167,10 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
 }
 
 static void codegen_var_decl(AstVarDecl *decl) {
-  AstVarDef *def = decl->def;
-  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
-  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
+    char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+    char *temp_type = malloc(def->dimensions.count * sizeof(char));
     Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
     if (def->dimensions.count > 0) {
@@ -1237,18 +1229,17 @@ static void codegen_var_decl(AstVarDecl *decl) {
       }
     }
     free((void *)name);
-    def = def->next;
+    free(type);
+    free(temp_type);
   }
-  free(type);
-  free(temp_type);
 }
 
 static void codegen_const_decl(AstConstDecl *decl) {
-  AstConstDef *def = decl->def;
-  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
-  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
     if (def->dimensions.count > 0) {
+      char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+      char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
       int dimension_count = def->dimensions.count;
       int *dimensions = malloc(sizeof(int) * dimension_count);
       strcpy(type, "i32");
@@ -1297,8 +1288,9 @@ static void codegen_const_decl(AstConstDecl *decl) {
         outputf("  store %d, %%ptr_%d\n", n, ptr_index - 1);
       }
       free((void *)name);
+      free(type);
+      free(temp_type);
     }
-    def = def->next;
   }
 }
 
@@ -1481,13 +1473,13 @@ static void codegen_array_init_value(int *dimension, int dimension_count,
 }
 
 static void codegen_global_var_decl(AstVarDecl *decl) {
-  AstVarDef *def = decl->def;
-  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
-  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
     Symbol *symbol = new_symbol(def->name, SymbolType_int);
     const char *name = symbol_unique_name(symbol);
     if (def->dimensions.count > 0) {
+      char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+      char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
       int *dimensions = malloc(sizeof(int) * def->dimensions.count);
       strcpy(type, "i32");
       for (int i = def->dimensions.count - 1; i > -1; i--) {
@@ -1510,6 +1502,8 @@ static void codegen_global_var_decl(AstVarDecl *decl) {
       } else {
         outputf("zeroinit\n");
       }
+      free(type);
+      free(temp_type);
     } else {
       outputf("global %s = alloc i32, ", name);
       if (def->val) {
@@ -1520,18 +1514,15 @@ static void codegen_global_var_decl(AstVarDecl *decl) {
       }
     }
     free((void *)name);
-    def = def->next;
   }
-  free(type);
-  free(temp_type);
 }
 
 static void codegen_global_const_decl(AstConstDecl *decl) {
-  AstConstDef *def = decl->def;
-  char *type = malloc(def->dimensions.count * 32 * sizeof(char));
-  char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
-  while (def) {
+  for (int i = 0; i < decl->defs.count; i++) {
+    AstVarDef *def = decl->defs.elements[i];
     if (def->dimensions.count > 0) {
+      char *type = malloc(def->dimensions.count * 32 * sizeof(char));
+      char *temp_type = malloc(def->dimensions.count * 32 * sizeof(char));
       int *dimensions = malloc(sizeof(int) * def->dimensions.count);
       strcpy(type, "i32");
       for (int i = def->dimensions.count - 1; i > -1; i--) {
@@ -1555,11 +1546,10 @@ static void codegen_global_const_decl(AstConstDecl *decl) {
                                (AstArrayValue *)def->val);
       outputf("\n");
       free((void *)name);
+      free(type);
+      free(temp_type);
     }
-    def = def->next;
   }
-  free(type);
-  free(temp_type);
 }
 
 static void codegen_func_def(AstFuncDef *func_def) {
@@ -1675,7 +1665,7 @@ static void codegen_comp_unit(AstCompUnit *comp_unit) {
       update_func_type(func_def, &symbol->func_type);
       codegen_func_def(func_def);
       if (strcmp(func_def->ident->name, "main") == 0 &&
-          func_def->func_type == BType_INT) {
+          func_def->param_count == 0 && func_def->func_type == BType_INT) {
         has_main = true;
       }
     } else if (comp_unit->defs[i]->type == AST_VAR_DECL) {

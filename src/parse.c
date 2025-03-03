@@ -368,8 +368,8 @@ static AstIdentifier *parse_identifier(void) {
 // ConstDef    ::= IDENT ("[" ConstExp "]")* "=" ConstInitVal;
 // ConstInitVal::= ConstExp | ArrayVal;
 // ConstExp    ::= Exp;
-static AstConstDef *parse_const_def(void) {
-  AstConstDef *def = new_ast_const_def();
+static AstVarDef *parse_const_def(void) {
+  AstVarDef *def = new_ast_var_def();
   def->name = strndup(parser.current.start, parser.current.length);
   consume(TOKEN_IDENTIFIER);
   while (current_is(TOKEN_LBRACKET)) {
@@ -393,14 +393,11 @@ static AstConstDecl *parse_const_decl(void) {
   match("const");
   match("int");
   const_decl->type = BType_INT;
-  AstConstDef head;
-  AstConstDef *tail = &head;
   do {
-    tail->next = parse_const_def();
-    tail = tail->next;
+    AstVarDef *def = parse_const_def();
+    var_def_array_add(&const_decl->defs, def);
   } while (try_consume(TOKEN_COMMA));
   consume(TOKEN_SEMICOLON);
-  const_decl->def = head.next;
   return const_decl;
 }
 
@@ -432,14 +429,11 @@ static AstVarDecl *parse_var_decl(void) {
   AstVarDecl *var_decl = new_ast_var_decl();
   match("int");
   var_decl->type = BType_INT;
-  AstVarDef head;
-  AstVarDef *tail = &head;
   do {
-    tail->next = parse_var_def();
-    tail = tail->next;
+    AstVarDef *def = parse_var_def();
+    var_def_array_add(&var_decl->defs, def);
   } while (try_consume(TOKEN_COMMA));
   consume(TOKEN_SEMICOLON);
-  var_decl->def = head.next;
   return var_decl;
 }
 
