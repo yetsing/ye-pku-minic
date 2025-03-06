@@ -506,6 +506,7 @@ void optimize_var_decl(AstVarDecl *decl) {
         dimensions[i] = n;
       }
       if (def->val) {
+        optimize_exp(def->val);
         def->val = flatten_multi_dimension_array(
             dimensions, def->dimensions.count, def->val);
       }
