@@ -1,10 +1,3 @@
-#include <assert.h>
-#include <math.h>
-#include <stdio.h>
-
-#define putch putchar
-void putint(int n) { printf("%d", n); }
-
 const int positive = 0;
 const int negative = 1;
 
@@ -17,15 +10,7 @@ const int negative = 1;
 // #define SCALE 10000 // 4 decimal places of precision
 const int SCALE = 10000; // 4 decimal places of precision
 
-// Print a fixed-point number
-void fp_print(int a[]) {
-  printf("%s%d.%04d", a[2] == 0 ? "" : "-", a[0], a[1]);
-  // putint(a[0]);
-  // putch(46); // '.'
-  // putint(a[1]);
-}
-
-// Add two fixed-point numbers
+// Add two fixed-point numbers, result = a + b
 void fp_add(int a[], int b[], int result[]) {
   int temp[3];
   if (a[2] == b[2]) {
@@ -76,7 +61,7 @@ void fp_add(int a[], int b[], int result[]) {
   }
 }
 
-// Subtract b from a
+// Subtract b from a, result = a - b
 void fp_sub(int a[], int b[], int result[]) {
   if (a[2] == positive && a[2] == b[2]) {
     // both positive
@@ -131,13 +116,6 @@ void fp_sub(int a[], int b[], int result[]) {
     result[0] = result[0] + 1;
     result[1] = result[1] - SCALE;
   }
-  // printf("    ");
-  // fp_print(a);
-  // printf(" - ");
-  // fp_print(b);
-  // printf(" = ");
-  // fp_print(result);
-  // printf("\n");
   return;
 }
 
@@ -155,7 +133,7 @@ int mod_mult(int a, int b, int mod) {
   return result;
 }
 
-// Multiply two fixed-point numbers
+// Multiply two fixed-point numbers, result = a * b
 void fp_mul(int a[], int b[], int result[]) {
   int part1 = a[0] * b[0];
   int int_part2 = 0;
@@ -198,7 +176,7 @@ void fp_mul(int a[], int b[], int result[]) {
   }
 }
 
-// Divide two fixed-point numbers
+// Divide two fixed-point numbers, result = a / b
 void fp_div(int a[], int b[], int result[]) {
   if (a[0] == b[0] && a[1] == b[1] && a[2] == b[2]) {
     result[0] = 1;
@@ -279,7 +257,7 @@ void fp_div(int a[], int b[], int result[]) {
   result[1] = frac_part;
 }
 
-/* Calculates x^y where x is fixed-point and y is a regular integer */
+/* Calculates x^y where x is fixed-point and y is a regular integer (y >= 0) */
 void fp_pow(int x[], int y, int result[]) {
   // Special cases
   if (x[0] == 0 && x[1] == 0) {
@@ -369,13 +347,6 @@ void fp_sqrt(int x[], int result[]) {
     // x < 1: start with x
   }
 
-  // printf("  fp_sqrt  ");
-  // fp_print(x);
-  // printf("\n");
-  // printf("    init = ");
-  // fp_print(guess);
-  // printf("\n");
-
   // Newton-Raphson iteration: next = (guess + x/guess) / 2
   // We'll perform several iterations for accuracy
   // Usually 5-10 iterations is enough for good precision
@@ -397,11 +368,6 @@ void fp_sqrt(int x[], int result[]) {
     guess[0] = next[0];
     guess[1] = next[1];
     guess[2] = next[2];
-
-    // printf("    iteration %d\n", i);
-    // printf("      ");
-    // fp_print(guess);
-    // printf("\n");
   }
 
   result[0] = guess[0];
@@ -410,9 +376,6 @@ void fp_sqrt(int x[], int result[]) {
 
 /* Calculate sine of a fixed-point number using Taylor series approximation */
 void fp_sin(int x[], int result[]) {
-  // printf("\n  fp_sin ");
-  // fp_print(x);
-  // printf("\n");
   // Normalize angle to [-π, π] range
   // First, create a 2π constant
   int two_pi[3] = {6, 2832, positive}; // 6.2832 is approximately 2π
@@ -435,12 +398,6 @@ void fp_sin(int x[], int result[]) {
     normalized[2] = temp1[2];
   }
 
-  // printf("  ");
-  // fp_print(x);
-  // printf(" normalized to ");
-  // fp_print(normalized);
-  // printf("\n");
-
   // Taylor series for sin(x) = x - x^3/3! + x^5/5! - x^7/7! + ...
   // We'll use the first 4 terms of the series for a reasonable approximation
 
@@ -452,50 +409,23 @@ void fp_sin(int x[], int result[]) {
   // x^3/3!
   int x3[3], term[3];
   fp_pow(normalized, 3, x3);
-  // printf("  x^3 = ");
-  // fp_print(x3);
-  // printf("\n");
   int factorial3[3] = {6, 0, positive}; // 3! = 6
   fp_div(x3, factorial3, term);
-  // printf("  x^3/3! = ");
-  // fp_print(term);
-  // printf("\n");
   fp_sub(result, term, temp1);
-  // printf("  x - x^3/3! = ");
-  // fp_print(temp1);
-  // printf("\n");
 
   // x^5/5!
   int x5[3];
   fp_pow(normalized, 5, x5);
-  // printf("  x^5 = ");
-  // fp_print(x5);
-  // printf("\n");
   int factorial5[3] = {120, 0, positive}; // 5! = 120
   fp_div(x5, factorial5, term);
-  // printf("  x^5/5! = ");
-  // fp_print(term);
-  // printf("\n");
   fp_add(temp1, term, temp2);
-  // printf("  x - x^3/3! + x^5/5! = ");
-  // fp_print(temp2);
-  // printf("\n");
 
   // x^7/7!
   int x7[3];
   fp_pow(normalized, 7, x7);
-  // printf("  x^7 = ");
-  // fp_print(x7);
-  // printf("\n");
   int factorial7[3] = {5040, 0, positive}; // 7! = 5040
   fp_div(x7, factorial7, term);
-  // printf("  x^7/7! = ");
-  // fp_print(term);
-  // printf("\n");
   fp_sub(temp2, term, result);
-  // printf("  x - x^3/3! + x^5/5! - x^7/7! = ");
-  // fp_print(result);
-  // printf("\n");
 }
 
 /* Calculate cosine of a fixed-point number using Taylor series approximation */
@@ -586,25 +516,13 @@ void donut(int x[], int y[], int z[], int result[]) {
   // math.sqrt(x**2 + y**2)
   safe_hypot(x, y, temp1);
 
-  // printf("  math.sqrt(x**2 + y**2) = ");
-  // fp_print(temp1);
-  // printf("\n");
-
   // t - radius
   fp_sub(temp1, radius, result);
   temp1[0] = result[0];
   temp1[1] = result[1];
 
-  // printf("  t - radius = ");
-  // fp_print(temp1);
-  // printf("\n");
-
   // math.sqrt(t**2 + z**2)
   safe_hypot(temp1, z, temp2);
-
-  // printf("  math.sqrt(t**2 + z**2) = ");
-  // fp_print(temp2);
-  // printf("\n");
 
   // result - thickness
   fp_sub(temp2, thickness, result);
@@ -621,9 +539,6 @@ void normal(int x[], int y[], int z[], int rx[], int ry[], int rz[]) {
   fp_sub(x, e, temp1);
   donut(temp1, y, z, temp3);
   fp_sub(temp2, temp3, n_x);
-  // printf("n_x = ");
-  // fp_print(n_x);
-  // printf("\n");
 
   // n_y = donut(x, y + ε, z) - donut(x, y - ε, z)
   fp_add(y, e, temp1);
@@ -631,9 +546,6 @@ void normal(int x[], int y[], int z[], int rx[], int ry[], int rz[]) {
   fp_sub(y, e, temp1);
   donut(x, temp1, z, temp3);
   fp_sub(temp2, temp3, n_y);
-  // printf("n_y = ");
-  // fp_print(n_y);
-  // printf("\n");
 
   // n_z = donut(x, y, z + ε) - donut(x, y, z - ε)
   fp_add(z, e, temp1);
@@ -641,16 +553,10 @@ void normal(int x[], int y[], int z[], int rx[], int ry[], int rz[]) {
   fp_sub(z, e, temp1);
   donut(x, y, temp1, temp3);
   fp_sub(temp2, temp3, n_z);
-  // printf("n_z = ");
-  // fp_print(n_z);
-  // printf("\n");
 
   // norm = math.sqrt(n_x**2 + n_y**2 + n_z**2)
   int norm[3];
   safe_hypot3(n_x, n_y, n_z, norm);
-  // printf("norm = ");
-  // fp_print(norm);
-  // printf("\n");
 
   // rx = n_x / norm
   fp_div(n_x, norm, rx);
@@ -773,22 +679,12 @@ void loop(int ts[]) {
   }
 }
 
-// use busy loop simulate sleep
-void delay(int iterations) {
-  int i = 0;
-  while (i < iterations) {
-    i = i + 1;
-  }
-}
-
 void loop_forever() {
   int ts[3] = {2, 0, positive};
-  int dt[3] = {0, 2000, positive};
+  int dt[3] = {0, 2500, positive};
   int temp1[3];
 
-  int i = 0;
-  while (i < 1000) {
-    i = i + 1;
+  while (1) {
 
     loop(ts);
     fp_add(ts, dt, temp1);
@@ -798,334 +694,7 @@ void loop_forever() {
   }
 }
 
-// Test fixed-point arithmetic
-void test_base() {
-  int a[3], b[3], c[3];
-
-  // Initialize a and b
-  float an = 1.50;
-  float bn = 2.25;
-  fp_init(a, 1, 5 * SCALE / 10);
-  fp_init(b, 2, 25 * SCALE / 100);
-
-  // Add a and b
-  fp_add(a, b, c);
-  fp_print(a);
-  // printf(" + ");
-  putch(32); // ' '
-  putch(43); // '+'
-  putch(32); // ' '
-  fp_print(b);
-  // printf(" = ");
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" %f\n", an + bn);
-  putch(10); // '\n'
-
-  // Subtract b from a
-  fp_sub(a, b, c);
-  fp_print(a);
-  // printf(" - ");
-  putch(32); // ' '
-  putch(45); // '-'
-  putch(32); // ' '
-  fp_print(b);
-  // printf(" = ");
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" %f\n", an - bn);
-  putch(10); // '\n'
-
-  // Multiply a and b
-  fp_mul(a, b, c);
-  fp_print(a);
-  // printf(" * ");
-  putch(32); // ' '
-  putch(42); // '*'
-  putch(32); // ' '
-  fp_print(b);
-  // printf(" = ");
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" %f\n", an * bn);
-  putch(10); // '\n'
-
-  // Divide a by b
-  fp_div(a, b, c);
-  fp_print(a);
-  // printf(" / ");
-  putch(32); // ' '
-  putch(47); // '/'
-  putch(32); // ' '
-  fp_print(b);
-  // printf(" = ");
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" %f\n", an / bn);
-  putch(10); // '\n'
-
-  // Calculate a^3
-  fp_pow(a, 3, c);
-  fp_print(a);
-  // printf(" ^ 3 = ");
-  putch(32); // ' '
-  putch(94); // '^'
-  putch(32); // ' '
-  putch(51); // '3'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" %f\n", pow(an, 3));
-  putch(10); // '\n'
-
-  // Calculate sqrt(a)
-  fp_sqrt(a, c);
-  // printf("sqrt(");
-  putch(115); // 's'
-  putch(113); // 'q'
-  putch(114); // 'r'
-  putch(116); // 't'
-  putch(40);  // '('
-  fp_print(a);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" %f\n", sqrt(an));
-  putch(10); // '\n'
-
-  // Test trigonometric functions
-  // printf("\n--- Testing Trigonometric Functions ---\n");
-  putch(10); // '\n'
-  putch(10); // '\n'
-
-  // Test sine function
-  int angle[3];
-  fp_init(angle, 1, 5708); // Approximately π/2 (1.5708)
-  fp_sin(angle, c);
-  // printf("sin(");
-  putch(115); // 's'
-  putch(105); // 'i'
-  putch(110); // 'n'
-  putch(40);  // '('
-  fp_print(angle);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" (should be close to 1.0000)\n");
-  putch(10); // '\n'
-
-  // Test cosine function
-  fp_cos(angle, c);
-  // printf("cos(");
-  putch(99);  // 'c'
-  putch(111); // 'o'
-  putch(115); // 's'
-  putch(40);  // '('
-  fp_print(angle);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" (should be close to 0.0000)\n");
-  putch(10); // '\n'
-
-  // Test zero angle
-  fp_init(angle, 0, 0);
-  fp_sin(angle, c);
-  // printf("sin(");
-  putch(115); // 's'
-  putch(105); // 'i'
-  putch(110); // 'n'
-  putch(40);  // '('
-  fp_print(angle);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" (should be 0.0000)\n");
-  putch(10); // '\n'
-
-  fp_cos(angle, c);
-  // printf("cos(");
-  putch(99);  // 'c'
-  putch(111); // 'o'
-  putch(115); // 's'
-  putch(40);  // '('
-  fp_print(angle);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" (should be 1.0000)\n");
-  putch(10); // '\n'
-
-  // Test pi
-  fp_init(angle, 3, 1416); // Approximately π
-  fp_sin(angle, c);
-  // printf("sin(");
-  putch(115); // 's'
-  putch(105); // 'i'
-  putch(110); // 'n'
-  putch(40);  // '('
-  fp_print(angle);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" (should be close to 0.0000)\n");
-  putch(10); // '\n'
-
-  fp_cos(angle, c);
-  // printf("cos(");
-  putch(99);  // 'c'
-  putch(111); // 'o'
-  putch(115); // 's'
-  putch(40);  // '('
-  fp_print(angle);
-  // printf(") = ");
-  putch(41); // ')'
-  putch(32); // ' '
-  putch(61); // '='
-  putch(32); // ' '
-  fp_print(c);
-  printf(" (should be close to -1.0000)\n");
-  putch(10); // '\n'
-}
-
-void test_donut() {
-  struct {
-    int x[3];
-    int y[3];
-    int z[3];
-    int want[3];
-  } testcases[] = {
-
-      {
-          {47505, 264, 1},
-          {0, 5000, 1},
-          {21741, 9689, 1},
-          {52243, 5361, 0},
-      },
-  };
-  int got[3];
-  size_t n = sizeof(testcases) / sizeof(testcases[0]);
-  for (size_t i = 0; i < n; i++) {
-    donut(testcases[i].x, testcases[i].y, testcases[i].z, got);
-    printf("donut(");
-    fp_print(testcases[i].x);
-    printf(", ");
-    fp_print(testcases[i].y);
-    printf(", ");
-    fp_print(testcases[i].z);
-    printf(") = ");
-    fp_print(got);
-    printf(" (");
-    fp_print(testcases[i].want);
-    printf(")\n");
-  }
-}
-
-void test_normal() {
-
-  struct {
-    int x[3];
-    int y[3];
-    int z[3];
-    int want_x[3];
-    int want_y[3];
-    int want_z[3];
-  } testcases[] = {
-      {
-          {0, 2210, 0},
-          {0, 5000, 1},
-          {0, 637, 1},
-          {0, 3708, 0},
-          {0, 8387, 1},
-          {0, 3988, 1},
-      },
-      {
-          {0, 2405, 0},
-          {0, 5000, 1},
-          {0, 273, 1},
-          {0, 4269, 0},
-          {0, 8873, 1},
-          {0, 1739, 1},
-      },
-  };
-  int got_x[3] = {0, 0, positive}, got_y[3] = {0, 0, positive},
-      got_z[3] = {0, 0, positive};
-  size_t n = sizeof(testcases) / sizeof(testcases[0]);
-  for (size_t i = 0; i < n; i++) {
-    normal(testcases[i].x, testcases[i].y, testcases[i].z, got_x, got_y, got_z);
-    printf("normal(");
-    fp_print(testcases[i].x);
-    printf(", ");
-    fp_print(testcases[i].y);
-    printf(", ");
-    fp_print(testcases[i].z);
-    printf(")\n");
-    printf("  x = ");
-    fp_print(got_x);
-    printf(" (");
-    fp_print(testcases[i].want_x);
-    printf(")\n");
-    printf("  y = ");
-    fp_print(got_y);
-    printf(" (");
-    fp_print(testcases[i].want_y);
-    printf(")\n");
-    printf("  z = ");
-    fp_print(got_z);
-    printf(" (");
-    fp_print(testcases[i].want_z);
-    printf(")\n");
-  }
-}
-
-void test_temp() {
-  int a[3] = {0, 2220, positive};
-  int b[3] = {0, 5000, negative};
-  int result[3];
-
-  safe_hypot(a, b, result);
-  printf("safe_hypot(");
-  fp_print(a);
-  printf(", ");
-  fp_print(b);
-  printf(") = ");
-  fp_print(result);
-  printf("\n");
-}
-
 int main() {
-  // test_base();
-  // test_donut();
-  // test_normal();
-  // test_temp();
-
   loop_forever();
   return 0;
 }
