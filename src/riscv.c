@@ -153,6 +153,28 @@ visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t get_elem_ptr);
 static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr);
 static void visit_global_init(const koopa_raw_value_t init);
 
+static void store_to_stack(const char *src_register, int offset,
+                           const char *temp_register) {
+  if (offset >= 2048) {
+    outputf("  li %s, %d\n", temp_register, offset);
+    outputf("  add %s, sp, %s\n", temp_register, temp_register);
+    outputf("  sw %s, 0(%s)\n", src_register, temp_register);
+  } else {
+    outputf("  sw %s, %d(sp)\n", src_register, offset);
+  }
+}
+
+static void load_from_stack(const char *dst_register, int offset,
+                            const char *temp_register) {
+  if (offset >= 2048) {
+    outputf("  li %s, %d\n", temp_register, offset);
+    outputf("  add %s, sp, %s\n", temp_register, temp_register);
+    outputf("  lw %s, 0(%s)\n", dst_register, temp_register);
+  } else {
+    outputf("  lw %s, %d(sp)\n", dst_register, offset);
+  }
+}
+
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("\n  # === return ===\n");
   if (ret.value) {
@@ -162,26 +184,13 @@ static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
     } else {
       visit_koopa_raw_value(ret.value);
       // 从栈中取出返回值
-      int offset = get_temp_offset();
-      if (offset >= 2048) {
-        outputf("  li t0, %d\n", offset);
-        outputf("  add t0, sp, t0\n");
-        outputf("  lw a0, 0(t0)\n");
-      } else {
-        outputf("  lw a0, %d(sp)\n", offset);
-      }
+      load_from_stack("a0", get_temp_offset(), "t0");
     }
   }
   if (has_call) {
     // 如果调用了其他函数，需要恢复 ra 寄存器
     int offset = stack_size - 4;
-    if (offset >= 2048) {
-      outputf("  li t0, %d\n", offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  lw ra, 0(t0)\n");
-    } else {
-      outputf("  lw ra, %zu(sp)\n", stack_size - 4);
-    }
+    load_from_stack("ra", offset, "t0");
   }
 
   // 函数返回，恢复栈空间 epilogue
@@ -222,13 +231,7 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     }
   } else {
     // 从栈中取出 lhs
-    if (lhs_offset >= 2048) {
-      outputf("  li t0, %d\n", lhs_offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  lw t0, 0(t0)\n");
-    } else {
-      outputf("  lw t0, %d(sp)\n", lhs_offset);
-    }
+    load_from_stack("t0", lhs_offset, "t0");
   }
 
   const char *rhs_register = "t1";
@@ -242,13 +245,7 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
     }
   } else {
     // 从栈中取出 rhs
-    if (rhs_offset >= 2048) {
-      outputf("  li t1, %d\n", rhs_offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  lw t1, 0(t1)\n");
-    } else {
-      outputf("  lw t1, %d(sp)\n", rhs_offset);
-    }
+    load_from_stack("t1", rhs_offset, "t1");
   }
 
   // 目前所有变量都存储在栈上，所以这里可以直接使用 t0 作为结果寄存器
@@ -309,13 +306,7 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary) {
   temp_index++; // 存在返回值，所以栈指针需要移动
   // 将结果存储到栈上
   int offset = get_temp_offset();
-  if (offset >= 2048) {
-    outputf("  li t1, %d\n", offset);
-    outputf("  add t1, sp, t1\n");
-    outputf("  sw %s, 0(t1)\n", result_register);
-  } else {
-    outputf("  sw %s, %d(sp)\n", result_register, offset);
-  }
+  store_to_stack(result_register, offset, "t1");
   outputf("  # === binary %d end ===\n", binary.op);
 }
 
@@ -324,60 +315,21 @@ static void visit_koopa_raw_load(const koopa_raw_load_t load) {
     outputf("  la t0, %s\n", load.src->name + 1);
     outputf("  lw t0, 0(t0)\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
-    int offset2 = get_temp_offset();
-    if (offset2 >= 2048) {
-      outputf("  li t1, %d\n", offset2);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      assert(offset2 < 2048);
-      outputf("  sw t0, %d(sp)\n", offset2);
-    }
+    store_to_stack("t0", get_temp_offset(), "t1");
   } else if (load.src->kind.tag == KOOPA_RVT_ALLOC) {
     int offset = get_offset(load.src->name);
-    if (offset >= 2048) {
-      outputf("  li t0, %d\n", offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  lw t0, 0(t0)\n");
-    } else {
-      outputf("  lw t0, %d(sp)\n", offset);
-    }
+    load_from_stack("t0", offset, "t0");
     temp_index++; // 存在返回值，所以栈指针需要移动
-    int offset2 = get_temp_offset();
-    if (offset2 >= 2048) {
-      outputf("  li t1, %d\n", offset2);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      assert(offset2 < 2048);
-      outputf("  sw t0, %d(sp)\n", offset2);
-    }
+    store_to_stack("t0", get_temp_offset(), "t1");
   } else if (load.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
              load.src->kind.tag == KOOPA_RVT_GET_PTR) {
     visit_koopa_raw_value(load.src);
     // 将值加载到 t0
-    int offset = get_temp_offset();
-    if (offset >= 2048) {
-      outputf("  li t0, %d\n", offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  lw t0, 0(t0)\n");
-      // t0 存的是地址，需要再取一次
-      outputf("  lw t0, 0(t0)\n");
-    } else {
-      outputf("  lw t0, %d(sp)\n", offset);
-      // t0 存的是地址，需要再取一次
-      outputf("  lw t0, 0(t0)\n");
-    }
+    load_from_stack("t0", get_temp_offset(), "t0");
+    // t0 存的是地址，需要再取一次
+    outputf("  lw t0, 0(t0)\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
-    int offset2 = get_temp_offset();
-    if (offset2 >= 2048) {
-      outputf("  li t1, %d\n", offset2);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      assert(offset2 < 2048);
-      outputf("  sw t0, %d(sp)\n", offset2);
-    }
+    store_to_stack("t0", get_temp_offset(), "t1");
   } else {
     fatalf("visit_koopa_raw_load unknown src kind: %d\n", load.src->kind.tag);
   }
@@ -392,34 +344,16 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
       if (index < 8) {
         // 参数在 a0 ~ a7 中
         int offset = get_offset(store.dest->name);
-        if (offset >= 2048) {
-          outputf("  li t0, %d\n", offset);
-          outputf("  add t0, sp, t0\n");
-          outputf("  sw a%d, 0(t0)\n", index);
-        } else {
-          outputf("  sw a%d, %d(sp)\n", index, offset);
-        }
+        char src_reg[3] = {'a', '0' + index, '\0'};
+        store_to_stack(src_reg, offset, "t0");
       } else {
         // 参数在栈上
         int offset = (int)stack_size + (index - 8) * 4;
-        if (offset >= 2048) {
-          outputf("  li t0, %d\n", offset);
-          outputf("  add t0, sp, t0\n");
-          outputf("  lw t0, 0(t0)\n");
-        } else {
-          outputf("  lw t0, %d(sp)\n", offset);
-        }
+        load_from_stack("t0", offset, "t0");
         // 结果已经在 t0 中了，直接存储到栈上
         // outputf("  lw t0, %d(sp)\n", get_temp_offset());
         offset = get_offset(store.dest->name);
-        if (offset >= 2048) {
-          outputf("  li t1, %d\n", offset);
-          outputf("  add t1, sp, t1\n");
-          outputf("  sw t0, 0(t1)\n");
-        } else {
-          assert(offset < 2048);
-          outputf("  sw t0, %d(sp)\n", offset);
-        }
+        store_to_stack("t0", offset, "t1");
       }
       outputf("  # === end store arg ref ===\n");
     } else {
@@ -431,14 +365,7 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
         outputf("  sw t0, 0(t1)\n");
       } else {
         int offset = get_offset(store.dest->name);
-        if (offset >= 2048) {
-          outputf("  li t1, %d\n", offset);
-          outputf("  add t1, sp, t1\n");
-          outputf("  sw t0, 0(t1)\n");
-        } else {
-          assert(offset < 2048);
-          outputf("  sw t0, %d(sp)\n", offset);
-        }
+        store_to_stack("t0", offset, "t1");
       }
     }
   } else if (store.dest->kind.tag == KOOPA_RVT_GET_ELEM_PTR) {
@@ -457,22 +384,11 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
       outputf("  li t0, %d\n", store.value->kind.data.integer.value);
     } else {
       // 从栈中取出值
-      if (val_offset >= 2048) {
-        outputf("  li t0, %d\n", val_offset);
-        outputf("  add t0, sp, t0\n");
-        outputf("  lw t0, 0(t0)\n");
-      } else {
-        outputf("  lw t0, %d(sp)\n", val_offset);
-      }
+      load_from_stack("t0", val_offset, "t0");
     }
+    // 从栈中取出地址
+    load_from_stack("t1", dst_offset, "t1");
     // 将值保存到对应地址中
-    if (dst_offset >= 2048) {
-      outputf("  li t1, %d\n", dst_offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  lw t1, 0(t1)\n");
-    } else {
-      outputf("  lw t1, %d(sp)\n", dst_offset);
-    }
     outputf("  sw t0, 0(t1)\n");
   } else if (store.dest->kind.tag == KOOPA_RVT_GET_PTR) {
     // 保存的值
@@ -490,22 +406,11 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
       outputf("  li t0, %d\n", store.value->kind.data.integer.value);
     } else {
       // 从栈中取出值到 t0
-      if (val_offset >= 2048) {
-        outputf("  li t0, %d\n", val_offset);
-        outputf("  add t0, sp, t0\n");
-        outputf("  lw t0, 0(t0)\n");
-      } else {
-        outputf("  lw t0, %d(sp)\n", val_offset);
-      }
+      load_from_stack("t0", val_offset, "t0");
     }
+    // 从栈中取出地址到 t1
+    load_from_stack("t1", dst_offset, "t1");
     // 将值保存到对应地址中
-    if (dst_offset >= 2048) {
-      outputf("  li t1, %d\n", dst_offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  lw t1, 0(t1)\n");
-    } else {
-      outputf("  lw t1, %d(sp)\n", dst_offset);
-    }
     outputf("  sw t0, 0(t1)\n");
   } else {
     fatalf("visit_koopa_raw_store unknown dest kind: %d\n",
@@ -551,13 +456,8 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
       outputf("  li a%d, %d\n", i, arg->kind.data.integer.value);
     } else {
       int offset = arg_offsets[i];
-      if (offset >= 2048) {
-        outputf("  li t0, %d\n", offset);
-        outputf("  add t0, sp, t0\n");
-        outputf("  lw a%d, 0(t0)\n", i);
-      } else {
-        outputf("  lw a%d, %d(sp)\n", i, arg_offsets[i]);
-      }
+      char dst_reg[3] = {'a', '0' + i, '\0'};
+      load_from_stack(dst_reg, offset, "t0");
     }
   }
   // 如果参数个数大于 8，需要额外的栈空间保存参数
@@ -568,22 +468,10 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
       outputf("  li t0, %d\n", arg->kind.data.integer.value);
     } else {
       int offset = arg_offsets[i];
-      if (offset >= 2048) {
-        outputf("  li t0, %d\n", offset);
-        outputf("  add t0, sp, t0\n");
-        outputf("  lw t0, 0(t0)\n");
-      } else {
-        outputf("  lw t0, %d(sp)\n", arg_offsets[i]);
-      }
+      load_from_stack("t0", offset, "t0");
     }
     int offset = (i - 8) * 4;
-    if (offset >= 2048) {
-      outputf("  li t1, %d\n", offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      outputf("  sw t0, %d(sp)\n", offset);
-    }
+    store_to_stack("t0", offset, "t1");
   }
 
   // 调用函数
@@ -591,14 +479,7 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, bool has_return) {
   if (has_return) {
     // 保存返回值
     temp_index++; // 存在返回值，所以栈指针需要移动
-    int offset = get_temp_offset();
-    if (offset >= 2048) {
-      outputf("  li t0, %d\n", offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  sw a0, 0(t0)\n");
-    } else {
-      outputf("  sw a0, %d(sp)\n", offset);
-    }
+    store_to_stack("a0", get_temp_offset(), "t0");
     outputf("  mv t0, a0\n");
   }
   outputf("  # === call end ===\n");
@@ -657,13 +538,7 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
       outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
     } else {
       assert(index_offset > 0);
-      if (index_offset >= 2048) {
-        outputf("  li t1, %d\n", index_offset);
-        outputf("  add t1, sp, t1\n");
-        outputf("  lw t1, 0(t1)\n");
-      } else {
-        outputf("  lw t1, %d(sp)\n", index_offset);
-      }
+      load_from_stack("t1", index_offset, "t1");
     }
     // 计算 sizeof(t)
     int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
@@ -672,14 +547,7 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
     outputf("  add t0, t0, t1\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
     int offset = get_temp_offset();
-    if (offset >= 2048) {
-      outputf("  li t1, %d\n", offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      assert(offset < 2048);
-      outputf("  sw t0, %d(sp)\n", offset);
-    }
+    store_to_stack("t0", offset, "t1");
   } else if (gep.src->kind.tag == KOOPA_RVT_ALLOC) {
     // src type: *[t, len]
     // getelemptr = src + sizeof(t) * index
@@ -705,13 +573,7 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
       outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
     } else {
       assert(index_offset > 0);
-      if (index_offset >= 2048) {
-        outputf("  li t1, %d\n", index_offset);
-        outputf("  add t1, sp, t1\n");
-        outputf("  lw t1, 0(t1)\n");
-      } else {
-        outputf("  lw t1, %d(sp)\n", index_offset);
-      }
+      load_from_stack("t1", index_offset, "t1");
     }
     // 计算 sizeof(t)
     int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
@@ -719,15 +581,7 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
     outputf("  mul t1, t1, t2\n");
     outputf("  add t0, t0, t1\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
-    int offset2 = get_temp_offset();
-    if (offset2 >= 2048) {
-      outputf("  li t1, %d\n", offset2);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      assert(offset2 < 2048);
-      outputf("  sw t0, %d(sp)\n", offset2);
-    }
+    store_to_stack("t0", get_temp_offset(), "t1");
   } else if (gep.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
              gep.src->kind.tag == KOOPA_RVT_GET_PTR) {
     // src type: *[t, len]
@@ -743,25 +597,13 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
     }
     outputf("\n  # === get_elem_ptr ===\n");
     // 加载地址到 t0
-    if (ele_offset >= 2048) {
-      outputf("  li t0, %d\n", ele_offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  lw t0, 0(t0)\n");
-    } else {
-      outputf("  lw t0, %d(sp)\n", ele_offset);
-    }
+    load_from_stack("t0", ele_offset, "t0");
     // 加载索引到 t1
     if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
       outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
     } else {
       assert(index_offset > 0);
-      if (index_offset >= 2048) {
-        outputf("  li t1, %d\n", index_offset);
-        outputf("  add t1, sp, t1\n");
-        outputf("  lw t1, 0(t1)\n");
-      } else {
-        outputf("  lw t1, %d(sp)\n", index_offset);
-      }
+      load_from_stack("t1", index_offset, "t1");
     }
     // 计算 sizeof(t)
     int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
@@ -769,15 +611,7 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep) {
     outputf("  mul t1, t1, t2\n");
     outputf("  add t0, t0, t1\n");
     temp_index++; // 存在返回值，所以栈指针需要移动
-    int offset2 = get_temp_offset();
-    if (offset2 >= 2048) {
-      outputf("  li t1, %d\n", offset2);
-      outputf("  add t1, sp, t1\n");
-      outputf("  sw t0, 0(t1)\n");
-    } else {
-      assert(offset2 < 2048);
-      outputf("  sw t0, %d(sp)\n", offset2);
-    }
+    store_to_stack("t0", get_temp_offset(), "t1");
   } else {
     fatalf("visit_koopa_raw_get_elem_ptr unknown src kind: %d\n",
            gep.src->kind.tag);
@@ -796,25 +630,13 @@ static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr) {
   int src_offset = get_temp_offset();
   outputf("\n  # === get_ptr ===\n");
   // 加载地址到 t0
-  if (src_offset >= 2048) {
-    outputf("  li t0, %d\n", src_offset);
-    outputf("  add t0, sp, t0\n");
-    outputf("  lw t0, 0(t0)\n");
-  } else {
-    outputf("  lw t0, %d(sp)\n", src_offset);
-  }
+  load_from_stack("t0", src_offset, "t0");
   // 加载索引到 t1
   if (get_ptr.index->kind.tag == KOOPA_RVT_INTEGER) {
     outputf("  li t1, %d\n", get_ptr.index->kind.data.integer.value);
   } else {
     assert(index_offset > 0);
-    if (index_offset >= 2048) {
-      outputf("  li t1, %d\n", index_offset);
-      outputf("  add t1, sp, t1\n");
-      outputf("  lw t1, 0(t1)\n");
-    } else {
-      outputf("  lw t1, %d(sp)\n", index_offset);
-    }
+    load_from_stack("t1", index_offset, "t1");
   }
   // 计算 sizeof(t)
   int size = get_type_size(get_ptr.src->ty->data.pointer.base);
@@ -822,15 +644,7 @@ static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr) {
   outputf("  mul t1, t1, t2\n");
   outputf("  add t0, t0, t1\n");
   temp_index++; // 存在返回值，所以栈指针需要移动
-  int offset2 = get_temp_offset();
-  if (offset2 >= 2048) {
-    outputf("  li t1, %d\n", offset2);
-    outputf("  add t1, sp, t1\n");
-    outputf("  sw t0, 0(t1)\n");
-  } else {
-    assert(offset2 < 2048);
-    outputf("  sw t0, %d(sp)\n", offset2);
-  }
+  store_to_stack("t0", get_temp_offset(), "t1");
 }
 
 static void visit_koopa_raw_value(const koopa_raw_value_t value) {
@@ -964,13 +778,7 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
   if (has_call) {
     // 保存 ra 寄存器
     int offset = stack_size - 4;
-    if (offset >= 2048) {
-      outputf("  li t0, %d\n", offset);
-      outputf("  add t0, sp, t0\n");
-      outputf("  sw ra, 0(t0)\n");
-    } else {
-      outputf("  sw ra, %zu(sp)\n", stack_size - 4);
-    }
+    store_to_stack("ra", offset, "t0");
   }
   visit_koopa_raw_slice(func->bbs);
 }
