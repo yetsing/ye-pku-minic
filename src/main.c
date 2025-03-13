@@ -6,6 +6,8 @@
 #include "parse.h"
 #include "riscv.h"
 
+// #define DEBUG_LOG
+
 typedef enum {
   CODEGEN_TARGET_RISCV,
   CODEGEN_TARGET_KOOPA,
@@ -70,28 +72,38 @@ int main(int argc, char *argv[]) {
   }
 
   const char *input = read_from_file(input_file);
-  // printf("=== Input ===\n");
-  // printf("%s\n", input);
+#ifdef DEBUG_LOG
+  printf("=== Input ===\n");
+  printf("%s\n", input);
+#endif
   AstCompUnit *comp_unit = parse(input);
   if (target == CODEGEN_TARGET_RISCV) {
     koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
-    // printf("=== Koopa IR codegen result ===\n");
-    // printf("%s\n", ir);
+#ifdef DEBUG_LOG
+    printf("=== Koopa IR codegen result ===\n");
+    printf("%s\n", ir);
+#endif
     riscv_codegen(ir, output_file);
     free((void *)ir);
+#ifdef DEBUG_LOG
     const char *riscv = read_from_file(output_file);
-    // printf("=== RISC-V codegen result ===\n");
-    // printf("%s\n", riscv);
+    printf("=== RISC-V codegen result ===\n");
+    printf("%s\n", riscv);
     free((void *)riscv);
+#endif
   } else if (target == CODEGEN_TARGET_KOOPA) {
-    // printf("=== AST dump ===\n");
-    // comp_unit->base.dump((AstBase *)comp_unit, 0);
+#ifdef DEBUG_LOG
+    printf("=== AST dump ===\n");
+    comp_unit->base.dump((AstBase *)comp_unit, 0);
+#endif
     koopa_ir_codegen(comp_unit, output_file);
+#ifdef DEBUG_LOG
     const char *ir = read_from_file(output_file);
-    // printf("=== Koopa IR codegen result ===\n");
-    // printf("%s\n", ir);
+    printf("=== Koopa IR codegen result ===\n");
+    printf("%s\n", ir);
     free((void *)ir);
+#endif
   } else {
     fprintf(stderr, "未指定目标\n");
     exit(1);

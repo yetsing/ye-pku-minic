@@ -121,35 +121,68 @@ static void locals_reset(void) {
 }
 
 typedef struct {
-  koopa_raw_value_t *values;
+  koopa_raw_value_t value;
+  int depth;
+  bool is_top; // 是否是栈顶元素
+} TempValue;
+
+typedef struct {
+  TempValue *values;
   size_t len;
   size_t cap;
   int base_offset;
+  int max_depth;
+  int depth;
 } TempValueManager;
 
-static TempValueManager tv_manager = {NULL, 0, 0, 0};
+static TempValueManager tv_manager = {NULL, 0, 0, 0, 0, 0};
 
 static void tv_manager_reinit(int base_offset) {
   tv_manager.len = 0;
   tv_manager.cap = 16;
+  tv_manager.max_depth = 0;
+  tv_manager.depth = 0;
   tv_manager.base_offset = base_offset;
-  tv_manager.values = (koopa_raw_value_t *)realloc(
-      tv_manager.values, tv_manager.cap * sizeof(koopa_raw_value_t));
+  tv_manager.values = (TempValue *)realloc(tv_manager.values,
+                                           tv_manager.cap * sizeof(TempValue));
 }
 
 static void tv_manager_push(koopa_raw_value_t value) {
   if (tv_manager.len >= tv_manager.cap) {
     tv_manager.cap *= 2;
-    tv_manager.values = (koopa_raw_value_t *)realloc(
-        tv_manager.values, tv_manager.cap * sizeof(koopa_raw_value_t));
+    tv_manager.values = (TempValue *)realloc(
+        tv_manager.values, tv_manager.cap * sizeof(TempValue));
   }
-  tv_manager.values[tv_manager.len++] = value;
+  int idx = tv_manager.len;
+  int depth = tv_manager.depth;
+  tv_manager.values[idx] = (TempValue){value, depth, false};
+  tv_manager.max_depth = MAX(tv_manager.max_depth, depth);
+  tv_manager.depth++;
+  tv_manager.len++;
+}
+
+static void tv_manager_pop(int n) {
+  tv_manager.depth -= n;
+  assert(tv_manager.depth >= 0);
+}
+
+static void tv_manager_mark_top(const koopa_raw_value_t value) {
+  for (size_t i = 0; i < tv_manager.len; i++) {
+    if (tv_manager.values[i].value == value) {
+      tv_manager.values[i].is_top = true;
+      return;
+    }
+  }
+}
+
+static void tv_manager_mark_top_last() {
+  tv_manager.values[tv_manager.len - 1].is_top = true;
 }
 
 static int tv_manager_get_offset(koopa_raw_value_t value) {
   for (size_t i = 0; i < tv_manager.len; i++) {
-    if (tv_manager.values[i] == value) {
-      return tv_manager.base_offset + i * 4;
+    if (tv_manager.values[i].value == value) {
+      return tv_manager.base_offset + tv_manager.values[i].depth * 4;
     }
   }
   return -1;
@@ -161,8 +194,13 @@ static int tv_manager_bget_offset(koopa_raw_value_t value) {
   return offset;
 }
 
+static int tv_manager_get_max_depth() { return tv_manager.max_depth; }
+
 static void store_to_stack(const char *src_register, int offset,
                            const char *temp_register) {
+  if (offset < 0) {
+    return;
+  }
   if (offset >= 2048) {
     outputf("  li %s, %d\n", temp_register, offset);
     outputf("  add %s, sp, %s\n", temp_register, temp_register);
@@ -198,7 +236,7 @@ static int get_type_size(const koopa_raw_type_t ty) {
 // #endregion
 
 // #region visit IR 生成代码
-static void visit_koopa_raw_return(const koopa_raw_return_t ret, int tv_offset);
+static void visit_koopa_raw_return(const koopa_raw_return_t ret);
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n);
 static void visit_koopa_raw_value(const koopa_raw_value_t value);
 static void visit_koopa_raw_basic_block(const koopa_raw_basic_block_t block);
@@ -219,8 +257,7 @@ static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr,
                                     int tv_offset);
 static void visit_global_init(const koopa_raw_value_t init);
 
-static void visit_koopa_raw_return(const koopa_raw_return_t ret,
-                                   int tv_offset) {
+static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("    # return\n");
   if (ret.value) {
     if (ret.value->kind.tag == KOOPA_RVT_INTEGER) {
@@ -345,17 +382,19 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary,
 }
 
 static void visit_koopa_raw_load(const koopa_raw_load_t load, int tv_offset) {
-  outputf("    # load\n");
   if (load.src->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+    outputf("    # load %s\n", load.src->name);
     outputf("  la t0, %s\n", load.src->name + 1);
     outputf("  lw t0, 0(t0)\n");
     store_to_stack("t0", tv_offset, "t1");
   } else if (load.src->kind.tag == KOOPA_RVT_ALLOC) {
+    outputf("    # load %s\n", load.src->name);
     int offset = get_offset(load.src->name);
     load_from_stack("t0", offset, "t0");
     store_to_stack("t0", tv_offset, "t1");
   } else if (load.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
              load.src->kind.tag == KOOPA_RVT_GET_PTR) {
+    outputf("    # load %%xxx\n");
     // 将值加载到 t0
     load_from_stack("t0", tv_manager_bget_offset(load.src), "t0");
     // t0 存的是地址，需要再取一次
@@ -478,7 +517,6 @@ static void visit_koopa_raw_call(const koopa_raw_call_t call, int tv_offset) {
 
   // 调用函数
   outputf("  call %s\n", call.callee->name + 1); // + 1 是为了跳过函数名前的 @
-  printf("  # call tv_offset: %d\n", tv_offset);
   if (tv_offset >= 0) {
     // 保存返回值
     store_to_stack("a0", tv_offset, "t0");
@@ -609,7 +647,7 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
   int tv_offset = tv_manager_get_offset(value);
   switch (kind.tag) {
   case KOOPA_RVT_RETURN:
-    visit_koopa_raw_return(kind.data.ret, tv_offset);
+    visit_koopa_raw_return(kind.data.ret);
     break;
   case KOOPA_RVT_INTEGER:
     visit_koopa_raw_integer(kind.data.integer);
@@ -658,18 +696,146 @@ static void visit_koopa_raw_basic_block(const koopa_raw_basic_block_t block) {
   visit_koopa_raw_slice(block->insts);
 }
 
+static bool is_temp_value(const koopa_raw_value_t value) {
+  return value && value->kind.tag != KOOPA_RVT_INTEGER &&
+         value->kind.tag != KOOPA_RVT_ZERO_INIT &&
+         value->kind.tag != KOOPA_RVT_UNDEF &&
+         value->kind.tag != KOOPA_RVT_AGGREGATE &&
+         value->kind.tag != KOOPA_RVT_FUNC_ARG_REF &&
+         value->kind.tag != KOOPA_RVT_BLOCK_ARG_REF &&
+         value->kind.tag != KOOPA_RVT_ALLOC &&
+         value->kind.tag != KOOPA_RVT_GLOBAL_ALLOC &&
+         value->ty->tag != KOOPA_RTT_UNIT;
+}
+
+static void handle_tv_stack(const koopa_raw_value_t value) {
+  switch (value->kind.tag) {
+  case KOOPA_RVT_INTEGER:
+  case KOOPA_RVT_ZERO_INIT:
+  case KOOPA_RVT_UNDEF:
+  case KOOPA_RVT_AGGREGATE:
+  case KOOPA_RVT_FUNC_ARG_REF:
+  case KOOPA_RVT_BLOCK_ARG_REF:
+  case KOOPA_RVT_ALLOC:
+    // These types don't need special handling
+    break;
+
+  case KOOPA_RVT_GLOBAL_ALLOC:
+    // Global allocations are handled separately
+    break;
+
+  case KOOPA_RVT_LOAD: {
+    koopa_raw_value_t src = value->kind.data.load.src;
+    if (is_temp_value(src)) {
+      tv_manager_mark_top(src);
+      tv_manager_pop(1);
+    }
+    break;
+  }
+
+  case KOOPA_RVT_STORE: {
+    koopa_raw_value_t dest = value->kind.data.store.dest;
+    koopa_raw_value_t src = value->kind.data.store.value;
+    if (is_temp_value(src) || is_temp_value(dest)) {
+      tv_manager_mark_top_last();
+      if (is_temp_value(src)) {
+        tv_manager_pop(1);
+      }
+      if (is_temp_value(dest)) {
+        tv_manager_pop(1);
+      }
+    }
+    break;
+  }
+
+  case KOOPA_RVT_GET_PTR: {
+    koopa_raw_value_t src = value->kind.data.get_ptr.src;
+    if (is_temp_value(src)) {
+      tv_manager_mark_top(src);
+      tv_manager_pop(1);
+    }
+    break;
+  }
+
+  case KOOPA_RVT_GET_ELEM_PTR: {
+    koopa_raw_value_t src = value->kind.data.get_elem_ptr.src;
+    if (is_temp_value(src)) {
+      tv_manager_mark_top(src);
+      tv_manager_pop(1);
+    }
+    break;
+  }
+
+  case KOOPA_RVT_BINARY: {
+    koopa_raw_value_t lhs = value->kind.data.binary.lhs;
+    koopa_raw_value_t rhs = value->kind.data.binary.rhs;
+    if (is_temp_value(lhs) || is_temp_value(rhs)) {
+      tv_manager_mark_top_last();
+      if (is_temp_value(lhs)) {
+        tv_manager_pop(1);
+      }
+      if (is_temp_value(rhs)) {
+        tv_manager_pop(1);
+      }
+    }
+    break;
+  }
+
+  case KOOPA_RVT_BRANCH: {
+    koopa_raw_value_t cond = value->kind.data.branch.cond;
+    if (is_temp_value(cond)) {
+      tv_manager_mark_top(cond);
+      tv_manager_pop(1);
+    }
+    break;
+  }
+
+  case KOOPA_RVT_JUMP:
+    break;
+
+  case KOOPA_RVT_CALL: {
+    koopa_raw_call_t call = value->kind.data.call;
+    for (size_t i = 0; i < call.args.len; i++) {
+      koopa_raw_value_t arg = call.args.buffer[i];
+      if (is_temp_value(arg)) {
+        tv_manager_mark_top_last();
+        break;
+      }
+    }
+    for (size_t i = 0; i < call.args.len; i++) {
+      koopa_raw_value_t arg = call.args.buffer[i];
+      if (is_temp_value(arg)) {
+        tv_manager_pop(1);
+      }
+    }
+    break;
+  }
+
+  case KOOPA_RVT_RETURN: {
+    koopa_raw_value_t ret = value->kind.data.ret.value;
+    if (is_temp_value(ret)) {
+      tv_manager_mark_top(ret);
+      tv_manager_pop(1);
+    }
+    break;
+  }
+
+  default:
+    fatalf("handle_tv_stack: unknown kind: %d\n", value->kind.tag);
+  }
+}
+
 // 给临时变量分配栈空间
-static void assign_stack_of_temp_value(const koopa_raw_slice_t slice,
-                                       int base_offset) {
-  printf("assign_stack_of_temp_value, base_offset: %d\n", base_offset);
+__attribute__((unused)) static void
+assign_stack_of_temp_value(const koopa_raw_slice_t slice, int base_offset) {
   tv_manager_reinit(base_offset);
   for (size_t i = 0; i < slice.len; i++) {
     const koopa_raw_basic_block_t block = slice.buffer[i];
     for (size_t j = 0; j < block->insts.len; j++) {
       const koopa_raw_value_t value = block->insts.buffer[j];
+      handle_tv_stack(value);
       if (value->ty->tag != KOOPA_RTT_UNIT &&
           value->kind.tag != KOOPA_RVT_ALLOC) {
-        printf("  push one\n");
         tv_manager_push(value);
       }
     }
@@ -752,10 +918,10 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
     temp_base_offset += size;
     locals_add_offset(size);
   }
+  assign_stack_of_temp_value(func->bbs, temp_base_offset);
+  stack_size += (tv_manager_get_max_depth() * 4);
   // 对齐到 16 字节
   stack_size = (stack_size + 15) & ~15;
-
-  assign_stack_of_temp_value(func->bbs, temp_base_offset);
 
   outputf("%s:\n", func->name + 1); // + 1 是为了跳过函数名前的 @
   if (stack_size >= 2048) {

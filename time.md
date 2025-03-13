@@ -14,7 +14,7 @@ sys     0m23.218s
 ## riscv
 
 ```bash
-autotest -riscv /root/compiler
+time autotest -riscv /root/compiler
 ```
 
 real    6m9.556s

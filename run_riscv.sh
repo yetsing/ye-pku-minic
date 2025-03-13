@@ -11,4 +11,4 @@ echo "Compilation successful: /tmp/debug/compiler"
 clang /tmp/riscv_output.S -c -o /tmp/hello.o -target riscv32-unknown-linux-elf -march=rv32im -mabi=ilp32
 ld.lld /tmp/hello.o -L$CDE_LIBRARY_PATH/riscv32 -lsysy -o /tmp/hello
 # qemu-riscv32-static -g 1234 /tmp/hello &
-cat /tmp/riscv_output.S
+# cat /tmp/riscv_output.S
