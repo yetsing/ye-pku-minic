@@ -5,12 +5,14 @@
 #include "koopa_ir.h"
 #include "parse.h"
 #include "riscv.h"
+#include "riscv_perf.h"
 
 // #define DEBUG_LOG
 
 typedef enum {
   CODEGEN_TARGET_RISCV,
   CODEGEN_TARGET_KOOPA,
+  CODEGEN_TARGET_PERF,
 } CodegenTarget;
 
 static CodegenTarget target;
@@ -23,6 +25,8 @@ void handle_cli_arguments(int argc, char *argv[], char **input_file,
       target = CODEGEN_TARGET_KOOPA;
     } else if (strcmp(argv[i], "-riscv") == 0) {
       target = CODEGEN_TARGET_RISCV;
+    } else if (strcmp(argv[i], "-perf") == 0) {
+      target = CODEGEN_TARGET_PERF;
     } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
       *output_file = argv[i + 1];
       i++;
@@ -77,7 +81,8 @@ int main(int argc, char *argv[]) {
   printf("%s\n", input);
 #endif
   AstCompUnit *comp_unit = parse(input);
-  if (target == CODEGEN_TARGET_RISCV) {
+  switch (target) {
+  case CODEGEN_TARGET_RISCV: {
     koopa_ir_codegen(comp_unit, output_file);
     const char *ir = read_from_file(output_file);
 #ifdef DEBUG_LOG
@@ -92,7 +97,26 @@ int main(int argc, char *argv[]) {
     printf("%s\n", riscv);
     free((void *)riscv);
 #endif
-  } else if (target == CODEGEN_TARGET_KOOPA) {
+    break;
+  }
+  case CODEGEN_TARGET_PERF: {
+    koopa_ir_codegen(comp_unit, output_file);
+    const char *ir = read_from_file(output_file);
+#ifdef DEBUG_LOG
+    printf("=== Koopa IR codegen result ===\n");
+    printf("%s\n", ir);
+#endif
+    riscv_perf_codegen(ir, output_file);
+    free((void *)ir);
+#ifdef DEBUG_LOG
+    const char *riscv = read_from_file(output_file);
+    printf("=== RISC-V perf codegen result ===\n");
+    printf("%s\n", riscv);
+    free((void *)riscv);
+#endif
+    break;
+  }
+  case CODEGEN_TARGET_KOOPA: {
 #ifdef DEBUG_LOG
     printf("=== AST dump ===\n");
     comp_unit->base.dump((AstBase *)comp_unit, 0);
@@ -104,9 +128,13 @@ int main(int argc, char *argv[]) {
     printf("%s\n", ir);
     free((void *)ir);
 #endif
-  } else {
+    break;
+  }
+  default: {
     fprintf(stderr, "未指定目标\n");
     exit(1);
+    break;
+  }
   }
   fflush(stdout);
   return 0;

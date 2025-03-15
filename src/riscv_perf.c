@@ -918,6 +918,7 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
     int offset = stack_size - 4;
     store_to_stack("ra", offset, "t0");
   }
+
   for (size_t i = 0; i < func->bbs.len; i++) {
     assert(func->bbs.kind == KOOPA_RSIK_BASIC_BLOCK);
     const koopa_raw_basic_block_t block = func->bbs.buffer[i];
@@ -964,7 +965,7 @@ static void visit_koopa_raw_program(const koopa_raw_program_t program) {
 
 // #endregion
 
-void riscv_codegen(const char *ir, const char *output_file) {
+void riscv_perf_codegen(const char *ir, const char *output_file) {
   fp = fopen(output_file, "w");
   if (fp == NULL) {
     fprintf(stderr, "无法打开文件 %s\n", output_file);
