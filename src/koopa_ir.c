@@ -1165,6 +1165,7 @@ static void codegen_assign_stmt(AstAssignStmt *stmt) {
   } else {
     fatalf("不支持的左值类型 %s\n", ast_type_to_string(stmt->lhs->type));
   }
+  outputf("\n");
 }
 
 static void codegen_var_decl(AstVarDecl *decl) {

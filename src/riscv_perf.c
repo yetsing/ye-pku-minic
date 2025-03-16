@@ -63,17 +63,6 @@ static void new_global_variable(const char *name) {
   globals.count++;
 }
 
-static bool is_global(const char *name) {
-  Variable *var = globals.next;
-  while (var != NULL) {
-    if (strcmp(var->name, name) == 0) {
-      return true;
-    }
-    var = var->next;
-  }
-  return false;
-}
-
 static Variable *new_variable(const char *name) {
   assert(name != NULL);
   Variable *var = (Variable *)malloc(sizeof(Variable));
@@ -207,6 +196,148 @@ static void load_from_stack(const char *dst_register, int offset,
   }
 }
 
+#define REGISTER_COUNT 13
+static const char *registers[REGISTER_COUNT] = {
+    "a0",
+    "a1",
+    "a2",
+    "a3",
+    "a4",
+    "a5",
+    "a6",
+    "a7",
+    // t0 t1 不分配，需要留一些寄存器用来操作
+    "t2",
+    "t3",
+    "t4",
+    "t5",
+    "t6",
+};
+
+typedef struct {
+  koopa_raw_value_t value;
+  const char *reg;
+} RegisterAllocation;
+
+typedef struct {
+  const char *available[REGISTER_COUNT];
+  int available_count;
+  RegisterAllocation alolcations[REGISTER_COUNT];
+  int allocations_count;
+} RegisterManager;
+
+static RegisterManager register_manager;
+void register_manager_init(void) {
+  register_manager.available_count = REGISTER_COUNT;
+  for (int i = 0; i < REGISTER_COUNT; i++) {
+    register_manager.available[i] = (char *)registers[i];
+  }
+  register_manager.allocations_count = 0;
+}
+
+const char *register_manager_allocate(koopa_raw_value_t value) {
+  if (register_manager.available_count == 0) {
+    return "";
+  }
+  for (int i = 0; i < register_manager.allocations_count; i++) {
+    if (register_manager.alolcations[i].value == value) {
+      return register_manager.alolcations[i].reg;
+    }
+  }
+
+  const char *reg =
+      register_manager.available[register_manager.available_count - 1];
+  register_manager.available_count--;
+  register_manager.allocations_count++;
+  register_manager.alolcations[register_manager.allocations_count - 1] =
+      (RegisterAllocation){.value = value, .reg = reg};
+
+  if (value->name != NULL) {
+    outputf("      # register_manager_allocate %s, %s\n", value->name, reg);
+  } else {
+    outputf("    # register_manager_allocate %p, %s\n", value, reg);
+  }
+  return reg;
+}
+
+void register_manager_free(const char *reg) {
+
+  // 从 allocations 中删除
+  for (int i = 0; i < register_manager.allocations_count; i++) {
+    RegisterAllocation allocation = register_manager.alolcations[i];
+    if (strcmp(allocation.reg, reg) == 0) {
+      koopa_raw_value_t value = allocation.value;
+      if (value->name != NULL) {
+        outputf("      # register_manager_free %s, %s\n", value->name, reg);
+      } else {
+        outputf("    # register_manager_free %p, %s\n", value, reg);
+      }
+      for (int j = i; j < register_manager.allocations_count - 1; j++) {
+        register_manager.alolcations[j] = register_manager.alolcations[j + 1];
+      }
+      register_manager.allocations_count--;
+      register_manager.available[register_manager.available_count] = reg;
+      register_manager.available_count++;
+      break;
+    }
+  }
+}
+
+// 保存分配寄存器的值到栈上，释放所有寄存器
+void register_manager_flush(void) {
+  outputf("    # register_manager_flush\n");
+  for (int i = 0; i < register_manager.allocations_count; i++) {
+    RegisterAllocation alloc = register_manager.alolcations[i];
+    if (alloc.value->kind.tag == KOOPA_RVT_ALLOC) {
+      int offset = get_offset(alloc.value->name);
+      store_to_stack(alloc.reg, offset, "t0");
+    } else if (alloc.value->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+      outputf("  la t0, %s\n", alloc.value->name + 1);
+      outputf("  sw %s, 0(t0)\n", alloc.reg);
+    } else {
+      int offset = tv_manager_bget_offset(alloc.value);
+      store_to_stack(alloc.reg, offset, "t0");
+    }
+  }
+
+  register_manager_init();
+}
+
+// 从内存中加载值到寄存器
+//     如果值已经在寄存器中，直接返回所在寄存器
+//     否则，从内存中加载值到寄存器
+// 返回所在寄存器
+const char *register_manager_load_value(koopa_raw_value_t value,
+                                        const char *reg, const char *temp_reg) {
+  for (int i = 0; i < register_manager.allocations_count; i++) {
+    RegisterAllocation alloc = register_manager.alolcations[i];
+    if (alloc.value == value) {
+      return alloc.reg;
+    }
+  }
+  // 从内存中加载值到寄存器
+  if (value->kind.tag == KOOPA_RVT_INTEGER) {
+    if (value->kind.data.integer.value == 0) {
+      // 如果值是 0，直接使用 x0 即可
+      return "x0";
+    }
+    outputf("  li %s, %d\n", reg, value->kind.data.integer.value);
+  } else if (value->kind.tag == KOOPA_RVT_ALLOC) {
+    outputf("      # register_manager_load_value\n");
+    int offset = get_offset(value->name);
+    load_from_stack(reg, offset, temp_reg);
+  } else if (value->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+    outputf("      # register_manager_load_value\n");
+    outputf("  la %s, %s\n", reg, value->name + 1);
+    outputf("  lw %s, 0(%s)\n", reg, reg);
+  } else {
+    outputf("      # register_manager_load_value\n");
+    int offset = tv_manager_bget_offset(value);
+    load_from_stack(reg, offset, temp_reg);
+  }
+  return reg;
+}
+
 static int get_type_size(const koopa_raw_type_t ty);
 static int get_type_size(const koopa_raw_type_t ty) {
   if (ty->tag == KOOPA_RTT_INT32 || ty->tag == KOOPA_RTT_POINTER) {
@@ -230,7 +361,8 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func);
 static void visit_koopa_raw_slice(const koopa_raw_slice_t slice);
 static void visit_koopa_raw_program(const koopa_raw_program_t program);
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary,
-                                   int tv_offset);
+                                   int tv_offset,
+                                   const koopa_raw_value_t value);
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch);
 static void visit_koopa_raw_jump(const koopa_raw_jump_t jump);
 static void visit_koopa_raw_call(const koopa_raw_call_t call, int tv_offset);
@@ -246,14 +378,12 @@ static void visit_global_init(const koopa_raw_value_t init);
 static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
   outputf("    # return\n");
   if (ret.value) {
-    if (ret.value->kind.tag == KOOPA_RVT_INTEGER) {
-      // 如果返回值是常量，直接使用立即数
-      outputf("  li a0, %d\n", ret.value->kind.data.integer.value);
-    } else {
-      // 从栈中取出返回值
-      load_from_stack("a0", tv_manager_get_offset(ret.value), "t0");
-    }
+    const char *reg = register_manager_load_value(ret.value, "t0", "t0");
+    outputf("  mv a0, %s\n", reg);
+    register_manager_free(reg);
   }
+  // 返回之前，需要将所有分配的寄存器的值保存到栈上
+  register_manager_flush();
   if (has_call) {
     // 如果调用了其他函数，需要恢复 ra 寄存器
     int offset = stack_size - 4;
@@ -271,43 +401,30 @@ static void visit_koopa_raw_return(const koopa_raw_return_t ret) {
 }
 
 static void visit_koopa_raw_integer(const koopa_raw_integer_t n) {
+  assert(false);
   outputf("    # integer\n");
   outputf("  li t0, %d\n", n.value);
 }
 
 static void visit_koopa_raw_binary(const koopa_raw_binary_t binary,
-                                   int tv_offset) {
-  outputf("    # binary %d ===\n", binary.op);
-  const char *lhs_register = "t0";
-  if (binary.lhs->kind.tag == KOOPA_RVT_INTEGER) {
-    if (binary.lhs->kind.data.integer.value == 0) {
-      // 如果 lhs 是 0，直接使用 x0 即可
-      lhs_register = "x0";
-    } else {
-      // 如果 lhs 是常量，直接使用立即数
-      outputf("  li t0, %d\n", binary.lhs->kind.data.integer.value);
-    }
-  } else {
-    // 从栈中取出 lhs
-    load_from_stack("t0", tv_manager_get_offset(binary.lhs), "t0");
-  }
+                                   int tv_offset,
+                                   const koopa_raw_value_t value) {
+  outputf("    # binary %d\n", binary.op);
+  const char *lhs_register =
+      register_manager_load_value(binary.lhs, "t0", "t0");
+  const char *rhs_register =
+      register_manager_load_value(binary.rhs, "t1", "t1");
 
-  const char *rhs_register = "t1";
-  if (binary.rhs->kind.tag == KOOPA_RVT_INTEGER) {
-    if (binary.rhs->kind.data.integer.value == 0) {
-      // 如果 rhs 是 0，直接使用 x0 即可
-      rhs_register = "x0";
-    } else {
-      // 如果 rhs 是常量，直接使用立即数
-      outputf("  li t1, %d\n", binary.rhs->kind.data.integer.value);
-    }
-  } else {
-    // 从栈中取出 rhs
-    load_from_stack("t1", tv_manager_get_offset(binary.rhs), "t1");
-  }
+  register_manager_free(lhs_register);
+  register_manager_free(rhs_register);
 
   // 目前所有变量都存储在栈上，所以这里可以直接使用 t0 作为结果寄存器
-  const char *result_register = "t0";
+  bool no_register = false;
+  const char *result_register = register_manager_allocate(value);
+  if (strcmp(result_register, "") == 0) {
+    result_register = "t0";
+    no_register = true;
+  }
   switch (binary.op) {
   case KOOPA_RBO_SUB:
     outputf("  sub %s, %s, %s\n", result_register, lhs_register, rhs_register);
@@ -362,30 +479,45 @@ static void visit_koopa_raw_binary(const koopa_raw_binary_t binary,
     fatalf("visit_koopa_raw_binary unknown op: %d\n", binary.op);
   }
   // 将结果存储到栈上
-  if (tv_offset >= 0) {
+  if (tv_offset >= 0 && no_register) {
     store_to_stack(result_register, tv_offset, "t1");
   }
 }
 
-static void visit_koopa_raw_load(const koopa_raw_load_t load, int tv_offset) {
+static void visit_koopa_raw_load(const koopa_raw_load_t load, int tv_offset,
+                                 const koopa_raw_value_t value) {
   if (load.src->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
     outputf("    # load %s\n", load.src->name);
-    outputf("  la t0, %s\n", load.src->name + 1);
-    outputf("  lw t0, 0(t0)\n");
-    store_to_stack("t0", tv_offset, "t1");
+    const char *src_reg = register_manager_load_value(load.src, "t0", "t0");
+    const char *dest_reg = register_manager_allocate(value);
+    if (strcmp(dest_reg, "") != 0) {
+      outputf("  mv %s, %s\n", dest_reg, src_reg);
+    } else {
+      store_to_stack(src_reg, tv_offset, "t1");
+    }
   } else if (load.src->kind.tag == KOOPA_RVT_ALLOC) {
     outputf("    # load %s\n", load.src->name);
-    int offset = get_offset(load.src->name);
-    load_from_stack("t0", offset, "t0");
-    store_to_stack("t0", tv_offset, "t1");
+    const char *src_reg = register_manager_load_value(load.src, "t0", "t0");
+    const char *dest_reg = register_manager_allocate(value);
+    if (strcmp(dest_reg, "") != 0) {
+      outputf("  mv %s, %s\n", dest_reg, src_reg);
+    } else {
+      store_to_stack(src_reg, tv_offset, "t1");
+    }
   } else if (load.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
              load.src->kind.tag == KOOPA_RVT_GET_PTR) {
     outputf("    # load %%xxx\n");
-    // 将值加载到 t0
-    load_from_stack("t0", tv_manager_bget_offset(load.src), "t0");
-    // t0 存的是地址，需要再取一次
-    outputf("  lw t0, 0(t0)\n");
-    store_to_stack("t0", tv_offset, "t1");
+    // 加载值
+    const char *src_reg = register_manager_load_value(load.src, "t0", "t0");
+    register_manager_free(src_reg);
+    // 存的是地址，需要再取一次
+    outputf("  lw t0, 0(%s)\n", src_reg);
+    const char *dest_reg = register_manager_allocate(value);
+    if (strcmp(dest_reg, "") != 0) {
+      outputf("  mv %s, t0\n", dest_reg);
+    } else {
+      store_to_stack("t0", tv_offset, "t1");
+    }
   } else {
     fatalf("visit_koopa_raw_load unknown src kind: %d\n", load.src->kind.tag);
   }
@@ -395,85 +527,87 @@ static void visit_koopa_raw_store(const koopa_raw_store_t store) {
   outputf("    # store\n");
   if (store.dest->kind.tag == KOOPA_RVT_ALLOC ||
       store.dest->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+    char src_reg[3] = {'t', '0', '\0'};
     if (store.value->kind.tag == KOOPA_RVT_FUNC_ARG_REF) {
       int index = store.value->kind.data.func_arg_ref.index;
       if (index < 8) {
         // 参数在 a0 ~ a7 中
-        int offset = get_offset(store.dest->name);
-        char src_reg[3] = {'a', '0' + index, '\0'};
-        store_to_stack(src_reg, offset, "t0");
+        src_reg[0] = 'a';
+        src_reg[1] = '0' + index;
       } else {
         // 参数在栈上
+        src_reg[0] = 't';
+        src_reg[1] = '0';
         int offset = (int)stack_size + (index - 8) * 4;
-        load_from_stack("t0", offset, "t0");
-        offset = get_offset(store.dest->name);
-        store_to_stack("t0", offset, "t1");
+        load_from_stack(src_reg, offset, src_reg);
       }
-    } else {
-      if (store.value->kind.tag == KOOPA_RVT_INTEGER) {
-        // 如果保存的值是常量，直接使用立即数
-        outputf("  li t0, %d\n", store.value->kind.data.integer.value);
-      } else {
-        // 从栈中取出值到 t0
-        load_from_stack("t0", tv_manager_bget_offset(store.value), "t0");
-      }
-      if (is_global(store.dest->name)) {
+      if (store.dest->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
         outputf("  la t1, %s\n", store.dest->name + 1);
-        outputf("  sw t0, 0(t1)\n");
+        outputf("  sw %s, 0(t1)\n", src_reg);
       } else {
         int offset = get_offset(store.dest->name);
-        store_to_stack("t0", offset, "t1");
+        store_to_stack(src_reg, offset, "t1");
+      }
+    } else {
+      const char *reg = register_manager_load_value(store.value, src_reg, "t0");
+      register_manager_free(reg);
+      strncpy(src_reg, reg, 3);
+      const char *dest_reg = register_manager_allocate(store.dest);
+      if (strcmp(dest_reg, "") != 0) {
+        outputf("  mv %s, %s\n", dest_reg, src_reg);
+      } else {
+        if (store.dest->kind.tag == KOOPA_RVT_GLOBAL_ALLOC) {
+          outputf("  la t1, %s\n", store.dest->name + 1);
+          outputf("  sw %s, 0(t1)\n", src_reg);
+        } else {
+          int offset = get_offset(store.dest->name);
+          store_to_stack(src_reg, offset, "t1");
+        }
       }
     }
-  } else if (store.dest->kind.tag == KOOPA_RVT_GET_ELEM_PTR) {
-    if (store.value->kind.tag == KOOPA_RVT_INTEGER) {
-      // 如果保存的值是常量，直接使用立即数
-      outputf("  li t0, %d\n", store.value->kind.data.integer.value);
-    } else {
-      // 从栈中取出值
-      load_from_stack("t0", tv_manager_bget_offset(store.value), "t0");
-    }
-    // 从栈中取出地址
-    load_from_stack("t1", tv_manager_bget_offset(store.dest), "t1");
+
+  } else if (store.dest->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
+             store.dest->kind.tag == KOOPA_RVT_GET_PTR) {
+    const char *value_reg =
+        register_manager_load_value(store.value, "t0", "t0");
+    const char *dest_addr_reg =
+        register_manager_load_value(store.dest, "t1", "t1");
+    register_manager_free(value_reg);
+    register_manager_free(dest_addr_reg);
+
     // 将值保存到对应地址中
-    outputf("  sw t0, 0(t1)\n");
-  } else if (store.dest->kind.tag == KOOPA_RVT_GET_PTR) {
-    if (store.value->kind.tag == KOOPA_RVT_INTEGER) {
-      // 如果保存的值是常量，直接使用立即数
-      outputf("  li t0, %d\n", store.value->kind.data.integer.value);
-    } else {
-      // 从栈中取出值到 t0
-      load_from_stack("t0", tv_manager_bget_offset(store.value), "t0");
-    }
-    // 从栈中取出地址到 t1
-    load_from_stack("t1", tv_manager_bget_offset(store.dest), "t1");
-    // 将值保存到对应地址中
-    outputf("  sw t0, 0(t1)\n");
+    outputf("  sw %s, 0(%s)\n", value_reg, dest_addr_reg);
   } else {
     fatalf("visit_koopa_raw_store unknown dest kind: %d\n",
            store.dest->kind.tag);
   }
+  outputf("\n");
 }
 
 static void visit_koopa_raw_branch(const koopa_raw_branch_t branch) {
   outputf("    # br xx, %s, %s\n", branch.true_bb->name, branch.false_bb->name);
-  if (branch.cond->kind.tag == KOOPA_RVT_INTEGER) {
-    outputf("  li t0, %d\n", branch.cond->kind.data.integer.value);
-  } else {
-    // 从栈中取出值到 t0
-    load_from_stack("t0", tv_manager_bget_offset(branch.cond), "t0");
-  }
+  const char *cond_register =
+      register_manager_load_value(branch.cond, "t0", "t0");
+  register_manager_free(cond_register);
+  // 跳转之前，需要将所有分配的寄存器的值保存到栈上
+  register_manager_flush();
+
   // +1 是为了跳过基本块名前的 %
-  outputf("  bnez t0, %s\n", branch.true_bb->name + 1);
+  outputf("  bnez %s, %s\n", cond_register, branch.true_bb->name + 1);
   outputf("  j %s\n", branch.false_bb->name + 1);
 }
 
 static void visit_koopa_raw_jump(const koopa_raw_jump_t jump) {
+  // 跳转之前，需要将所有分配的寄存器的值保存到栈上
+  register_manager_flush();
   outputf("    # jump %s\n", jump.target->name);
   outputf("  j %s\n", jump.target->name + 1);
 }
 
 static void visit_koopa_raw_call(const koopa_raw_call_t call, int tv_offset) {
+  // 调用之前，需要将所有分配的寄存器的值保存到栈上
+  // TODO 优化：恢复分配的寄存器
+  register_manager_flush();
   outputf("    # call %s\n", call.callee->name);
   // 参数传递
   for (int i = 0; i < 8 && i < call.args.len; i++) {
@@ -544,16 +678,14 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep,
     // src type: *[t, len]
     // getelemptr = src + sizeof(t) * index
     // 全局变量
-    outputf("  la t0, %s\n", gep.src->name + 1);
-    if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
-      outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
-    } else {
-      load_from_stack("t1", tv_manager_bget_offset(gep.index), "t1");
-    }
-    // 计算 sizeof(t)
+    const char *index_reg = register_manager_load_value(gep.index, "t0", "t0");
+    register_manager_free(index_reg);
+    // 计算 sizeof(t) * index
     int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
-    outputf("  li t2, %d\n", size);
-    outputf("  mul t1, t1, t2\n");
+    outputf("  li t1, %d\n", size);
+    outputf("  mul t1, %s, t1\n", index_reg);
+    // 加载全局变量地址到 t0
+    outputf("  la t0, %s\n", gep.src->name + 1);
     outputf("  add t0, t0, t1\n");
     store_to_stack("t0", tv_offset, "t1");
   } else if (gep.src->kind.tag == KOOPA_RVT_ALLOC) {
@@ -562,6 +694,13 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep,
     assert(gep.src->ty->tag == KOOPA_RTT_POINTER);
     assert(gep.src->ty->data.pointer.base->tag == KOOPA_RTT_ARRAY);
     // 局部变量
+    // 加载索引
+    const char *index_reg = register_manager_load_value(gep.index, "t0", "t0");
+    register_manager_free(index_reg);
+    // 计算 sizeof(t) * index
+    int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
+    outputf("  li t1, %d\n", size);
+    outputf("  mul t1, %s, t1\n", index_reg);
     // 加载变量地址到 t0
     int offset = get_offset(gep.src->name);
     if (offset <= 2048) {
@@ -570,37 +709,28 @@ static void visit_koopa_raw_get_elem_ptr(const koopa_raw_get_elem_ptr_t gep,
       outputf("  li t0, %d\n", offset);
       outputf("  add t0, sp, t0\n");
     }
-    // 加载索引到 t1
-    if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
-      outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
-    } else {
-      load_from_stack("t1", tv_manager_bget_offset(gep.index), "t1");
-    }
-    // 计算 sizeof(t)
-    int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
-    outputf("  li t2, %d\n", size);
-    outputf("  mul t1, t1, t2\n");
     outputf("  add t0, t0, t1\n");
     store_to_stack("t0", tv_offset, "t1");
   } else if (gep.src->kind.tag == KOOPA_RVT_GET_ELEM_PTR ||
              gep.src->kind.tag == KOOPA_RVT_GET_PTR) {
-    // src type: *[t, len]
+    // src type: *[t, len] or *t
     // getelemptr = src + sizeof(t) * index
     assert(gep.src->ty->tag == KOOPA_RTT_POINTER);
     assert(gep.src->ty->data.pointer.base->tag == KOOPA_RTT_ARRAY);
-    // 加载地址到 t0
-    load_from_stack("t0", tv_manager_bget_offset(gep.src), "t0");
-    // 加载索引到 t1
-    if (gep.index->kind.tag == KOOPA_RVT_INTEGER) {
-      outputf("  li t1, %d\n", gep.index->kind.data.integer.value);
-    } else {
-      load_from_stack("t1", tv_manager_bget_offset(gep.index), "t1");
-    }
-    // 计算 sizeof(t)
+    // 加载索引到
+    const char *index_reg = register_manager_load_value(gep.index, "t0", "t0");
+    register_manager_free(index_reg);
+
+    // 计算 sizeof(t) * index
     int size = get_type_size(gep.src->ty->data.pointer.base->data.array.base);
-    outputf("  li t2, %d\n", size);
-    outputf("  mul t1, t1, t2\n");
-    outputf("  add t0, t0, t1\n");
+    outputf("  li t1, %d\n", size);
+    outputf("  mul t1, %s, t1\n", index_reg);
+
+    // 加载地址到
+    const char *addr_reg = register_manager_load_value(gep.src, "t0", "t0");
+    register_manager_free(addr_reg);
+
+    outputf("  add t0, %s, t1\n", addr_reg);
     store_to_stack("t0", tv_offset, "t1");
   } else {
     fatalf("visit_koopa_raw_get_elem_ptr unknown src kind: %d\n",
@@ -612,19 +742,18 @@ static void visit_koopa_raw_get_ptr(const koopa_raw_get_ptr_t get_ptr,
                                     int tv_offset) {
   // get_ptr = src + sizeof(t) * index
   outputf("    # get_ptr\n");
-  // 加载地址到 t0
-  load_from_stack("t0", tv_manager_bget_offset(get_ptr.src), "t0");
-  // 加载索引到 t1
-  if (get_ptr.index->kind.tag == KOOPA_RVT_INTEGER) {
-    outputf("  li t1, %d\n", get_ptr.index->kind.data.integer.value);
-  } else {
-    load_from_stack("t1", tv_manager_bget_offset(get_ptr.index), "t1");
-  }
+  // 加载索引
+  const char *index_reg =
+      register_manager_load_value(get_ptr.index, "t0", "t0");
+  register_manager_free(index_reg);
   // 计算 sizeof(t)
   int size = get_type_size(get_ptr.src->ty->data.pointer.base);
-  outputf("  li t2, %d\n", size);
-  outputf("  mul t1, t1, t2\n");
-  outputf("  add t0, t0, t1\n");
+  outputf("  li t1, %d\n", size);
+  outputf("  mul t1, %s, t1\n", index_reg);
+  // 加载地址
+  const char *addr_reg = register_manager_load_value(get_ptr.src, "t0", "t0");
+  register_manager_free(addr_reg);
+  outputf("  add t0, %s, t1\n", addr_reg);
   store_to_stack("t0", tv_offset, "t1");
 }
 
@@ -639,10 +768,10 @@ static void visit_koopa_raw_value(const koopa_raw_value_t value) {
     visit_koopa_raw_integer(kind.data.integer);
     break;
   case KOOPA_RVT_BINARY:
-    visit_koopa_raw_binary(kind.data.binary, tv_offset);
+    visit_koopa_raw_binary(kind.data.binary, tv_offset, value);
     break;
   case KOOPA_RVT_LOAD:
-    visit_koopa_raw_load(kind.data.load, tv_offset);
+    visit_koopa_raw_load(kind.data.load, tv_offset, value);
     break;
   case KOOPA_RVT_STORE:
     visit_koopa_raw_store(kind.data.store);
@@ -892,7 +1021,7 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
     // 如果函数调用了其他函数，需要额外的栈空间保存 ra 寄存器
     stack_size += 4;
     // 需要额外的栈空间保存 t0-6 a0-7 寄存器
-    stack_size += (7 + 8) * 4;
+    stack_size += REGISTER_COUNT * 4;
   }
   if (max_call_args > 8) {
     // 如果函数调用的参数个数大于 8，需要额外的栈空间保存参数
@@ -920,6 +1049,8 @@ static void visit_koopa_raw_function(const koopa_raw_function_t func) {
   }
 
   for (size_t i = 0; i < func->bbs.len; i++) {
+    // 实现基本块的寄存器分配
+    register_manager_init();
     assert(func->bbs.kind == KOOPA_RSIK_BASIC_BLOCK);
     const koopa_raw_basic_block_t block = func->bbs.buffer[i];
     visit_koopa_raw_basic_block(block);
