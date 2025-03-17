@@ -19,6 +19,11 @@ else()
   add_compile_options(-Wall -Wno-register -Werror -g)
 endif()
 
+option(ENABLE_DEBUG_LOG "Enable debug log" OFF)
+if(ENABLE_DEBUG_LOG)
+  add_definitions(-DDEBUG_LOG)
+endif()
+
 # options about libraries and includes
 set(LIB_DIR "$ENV{CDE_LIBRARY_PATH}/native" CACHE STRING "directory of libraries")
 set(INC_DIR "$ENV{CDE_INCLUDE_PATH}" CACHE STRING "directory of includes")
